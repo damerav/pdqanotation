@@ -33,9 +33,9 @@ class EmailAnnotatorStack(Stack):
 
         # ── 2. Cognito User Pool ─────────────────────────────────────────────
         user_pool = cognito.UserPool(
-            self, "UserPool",
+            self, "UserPoolV2",
             self_sign_up_enabled=False,   # admin-only invites for 5–10 users
-            sign_in_aliases=cognito.SignInAliases(email=True),
+            sign_in_aliases=cognito.SignInAliases(username=True, email=True),
             auto_verify=cognito.AutoVerifiedAttrs(email=True),
             password_policy=cognito.PasswordPolicy(
                 min_length=8,

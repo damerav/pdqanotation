@@ -11,7 +11,7 @@ Amplify.configure(awsConfig);
 
 export default function App() {
   return (
-    <Authenticator loginMechanisms={["email"]} variation="modal">
+    <Authenticator loginMechanisms={["username"]} variation="modal">
       {({ signOut, user }) => <Shell user={user} signOut={signOut} />}
     </Authenticator>
   );
