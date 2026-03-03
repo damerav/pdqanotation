@@ -18,12 +18,15 @@ class EmailAnnotatorStack(Stack):
         # ── 1. S3 bucket ────────────────────────────────────────────────────
         bucket = s3.Bucket(
             self, "AnnotatorBucket",
+            versioned=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             removal_policy=RemovalPolicy.RETAIN,
             lifecycle_rules=[
                 s3.LifecycleRule(
-                    id="expire-jobs-90-days",
-                    prefix="jobs/",
-                    expiration=Duration.days(90),
+                    id="expire-pdfs-7-days",
+                    prefix="pdfs/",
+                    expiration=Duration.days(7),
                 ),
             ],
         )

@@ -1,7 +1,8 @@
 {
-  "app": "python3 app.py",
+  "app": "python app.py",
   "context": {
     "region": "us-east-1",
-    "sesFromEmail": "noreply@yourdomain.com"
+    "account": "995432243105",
+    "sesFromEmail": "damerav@gmail.com"
   }
 }

@@ -22,6 +22,8 @@ RUN dnf install -y \
     xorg-x11-fonts-Type1 \
     xorg-x11-utils \
     alsa-lib \
+    nss \
+    nspr \
     && dnf clean all
 
 # Install Python dependencies
@@ -30,12 +32,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright and its Chromium browser
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Copy Lambda handler and modules
 COPY handler.py .
 COPY html_parser.py .
 COPY bedrock_classifier.py .
+COPY bedrock_reviewer.py .
 COPY screenshot_generator.py .
 COPY image_annotator.py .
 COPY pdf_builder.py .

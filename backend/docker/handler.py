@@ -29,8 +29,17 @@ def lambda_handler(event, context):
     if not html_content or not recipient_email:
         return _resp(400, {"error": "html_content and recipient_email are required."})
 
+    # SEC-11: File size limit (5 MB)
+    if len(html_content) > 5_000_000:
+        return _resp(400, {"error": "FILE_TOO_LARGE", "message": "HTML file exceeds 5 MB limit."})
+
+    # SEC-12: Content type validation
+    html_lower = html_content.strip().lower()
+    if not any(html_lower.startswith(tag) for tag in ["<html", "<!doctype", "<head", "<body"]):
+        return _resp(400, {"error": "INVALID_HTML", "message": "File does not appear to be valid HTML."})
+
     job_id = str(uuid.uuid4())[:8]
-    s3_prefix = f"jobs/{job_id}"
+    s3_prefix = f"pdfs/{job_id}"
 
     try:
         # 1. Parse all links from HTML
@@ -60,7 +69,7 @@ def lambda_handler(event, context):
         )
 
         # 7. Save PDF to S3
-        pdf_key = f"{s3_prefix}/{filename.replace('.html', '')}_annotated.pdf"
+        pdf_key = f"pdfs/{job_id}/{filename.replace('.html', '')}_annotated.pdf"
         s3.put_object(Bucket=BUCKET, Key=pdf_key, Body=pdf_bytes, ContentType="application/pdf")
 
         # 8. Generate pre-signed URL (7-day expiry)
