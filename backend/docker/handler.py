@@ -197,36 +197,76 @@ def _extract_images_zip(images_s3_key: str) -> str:
         shutil.rmtree(work_dir, ignore_errors=True)
         raise ValueError(f"Images ZIP exceeds {MAX_ZIP_SIZE // 1_000_000} MB limit.")
 
-    # Extract ZIP contents (images only, skip dangerous paths)
+    # Extract ZIP contents (images only, skip dangerous paths and macOS metadata)
     with zipfile.ZipFile(zip_path, "r") as zf:
         for member in zf.infolist():
-            # Skip directories, hidden files, and path traversal attempts
             if member.is_dir():
                 continue
-            if member.filename.startswith((".", "/", "..")) or ".." in member.filename:
+            # Skip macOS resource forks, hidden files, and path traversal
+            basename = os.path.basename(member.filename)
+            if ("__MACOSX" in member.filename or basename.startswith(".")
+                    or "/.." in member.filename or member.filename.startswith("..")):
                 continue
-            # Only extract image files
+            if ".." in member.filename:
+                continue
             lower_name = member.filename.lower()
             if not lower_name.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")):
                 continue
             zf.extract(member, work_dir)
+
+    # Flatten nested duplicate folders (e.g. images/images/<files> → images/<files>)
+    _flatten_nested_dirs(work_dir)
 
     # Remove the ZIP file after extraction
     os.unlink(zip_path)
     return work_dir
 
 
+def _flatten_nested_dirs(work_dir: str) -> None:
+    """Flatten ZIP artifacts where a folder contains only a single subfolder.
+
+    Common patterns:
+    - ``images.zip`` → ``images/images/<files>``  (same-name nesting)
+    - ``index.zip``  → ``index/index/<files>``    (same-name nesting)
+    - ``assets.zip``  → ``assets/dist/<files>``   (single-child nesting)
+    This collapses the extra level so HTML relative paths resolve correctly.
+    """
+    for entry in os.listdir(work_dir):
+        top = os.path.join(work_dir, entry)
+        if not os.path.isdir(top):
+            continue
+        children = os.listdir(top)
+        # If the only child is a single subdirectory, flatten it up
+        if len(children) == 1:
+            child_path = os.path.join(top, children[0])
+            if os.path.isdir(child_path):
+                for item in os.listdir(child_path):
+                    src = os.path.join(child_path, item)
+                    dst = os.path.join(top, item)
+                    shutil.move(src, dst)
+                os.rmdir(child_path)
+
+
 def _rewrite_image_paths(html_content: str, work_dir: str) -> str:
     """Rewrite image src and CSS url() references to use absolute file:// paths."""
-    # Build a map of filename -> absolute path for all extracted images
+    # Build a map of filename -> absolute path for all extracted images.
+    # ZIPs often nest like  index/index/<files>  or  images/images/<files>.
+    # We register every possible path suffix so HTML refs like "images/header.jpg"
+    # resolve even when the actual extracted path is "images/images/header.jpg".
     image_map: dict[str, str] = {}
     for root, _dirs, files in os.walk(work_dir):
         for fname in files:
             abs_path = os.path.join(root, fname)
-            # Map both the bare filename and the relative path from work_dir
             rel_path = os.path.relpath(abs_path, work_dir)
-            image_map[fname.lower()] = abs_path
-            image_map[rel_path.lower()] = abs_path
+            # Normalise to forward slashes for consistent lookup
+            rel_parts = rel_path.replace("\\", "/").lower().split("/")
+            # Register the full relative path and every trailing sub-path.
+            # e.g. "images/images/header.jpg" → also "images/header.jpg", "header.jpg"
+            for i in range(len(rel_parts)):
+                sub = "/".join(rel_parts[i:])
+                # Only set if not already mapped (first match wins for duplicates)
+                if sub not in image_map:
+                    image_map[sub] = abs_path
 
     def _replace_src(match: re.Match) -> str:
         """Replace an image src attribute value with a file:// path."""
@@ -238,16 +278,10 @@ def _rewrite_image_paths(html_content: str, work_dir: str) -> str:
         if original.startswith(("data:", "http://", "https://", "file://")):
             return match.group(0)
 
-        # Try to find the image in our extracted files
-        lookup = original.lower().lstrip("./")
+        # Normalise and look up in the suffix map
+        lookup = original.replace("\\", "/").lower().lstrip("./")
         if lookup in image_map:
             return f'{prefix}file://{image_map[lookup]}{suffix}'
-
-        # Try bare filename as fallback
-        bare = os.path.basename(lookup)
-        if bare in image_map:
-            return f'{prefix}file://{image_map[bare]}{suffix}'
-
         return match.group(0)
 
     def _replace_css_url(match: re.Match) -> str:
@@ -260,14 +294,9 @@ def _rewrite_image_paths(html_content: str, work_dir: str) -> str:
         if original.startswith(("data:", "http://", "https://", "file://")):
             return match.group(0)
 
-        lookup = original.lower().lstrip("./")
+        lookup = original.replace("\\", "/").lower().lstrip("./")
         if lookup in image_map:
             return f'{prefix}{quote}file://{image_map[lookup]}{quote}{suffix}'
-
-        bare = os.path.basename(lookup)
-        if bare in image_map:
-            return f'{prefix}{quote}file://{image_map[bare]}{quote}{suffix}'
-
         return match.group(0)
 
     # Rewrite src="..." and src='...' attributes
