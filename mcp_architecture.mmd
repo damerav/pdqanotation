@@ -1,0 +1,56 @@
+flowchart TD
+    USER["👤 User Browser\nAWS Amplify + Cognito"]
+    APIGW["API Gateway\nCognito JWT Authorizer"]
+    LAMBDA["Lambda Processor\n3 GB · 5 min"]
+
+    subgraph SPRINT1["Sprint 1 — Quality Improvements"]
+        LINK["🔗 Linkinator MCP\nLive URL Validation\n(HTTP status for all links)"]
+        KBMCP["📚 Bedrock Knowledge Bases MCP\nBrand + Compliance RAG\n(brand guidelines, approved claims)"]
+        PLAYWRIGHT["🎭 Playwright MCP\nScreenshot Service\n(desktop 1200px + mobile 390px)"]
+    end
+
+    subgraph BEDROCK["AWS Bedrock (Direct)"]
+        HAIKU["Claude 3 Haiku\nLink Classification"]
+        SONNET["Claude 3 Sonnet\nEmail Quality Review\n(enriched with RAG context)"]
+    end
+
+    subgraph SPRINT2["Sprint 2 — Operations & Reliability"]
+        CW["📊 CloudWatch MCP\nCustom Metrics + Alarms\n(error rates, review scores)"]
+        SQS["📨 SNS/SQS MCP\nAsync Job Queue\n(decouple upload from processing)"]
+    end
+
+    subgraph SPRINT3["Sprint 3 — Visual Analysis"]
+        BDA["🤖 Bedrock Data Automation MCP\nVisual Review Pass\n(contrast, layout, tap targets)"]
+    end
+
+    subgraph SPRINT4["Sprint 4 — CRM Integration"]
+        CRM["🏢 HubSpot / SFMC MCP\nAuto-attach PDF to Campaign Record\n(permanent audit trail)"]
+    end
+
+    subgraph STORAGE["Storage + Delivery (unchanged)"]
+        S3["Amazon S3\nPDF + Job History"]
+        SES["Amazon SES\nEmail Delivery"]
+    end
+
+    USER --> APIGW --> LAMBDA
+
+    LAMBDA --> LINK
+    LAMBDA --> HAIKU
+    LAMBDA --> KBMCP
+    KBMCP --> SONNET
+    LAMBDA --> PLAYWRIGHT
+    PLAYWRIGHT --> BDA
+
+    LAMBDA --> CW
+    LAMBDA --> SQS
+
+    LAMBDA --> S3
+    LAMBDA --> SES
+    LAMBDA --> CRM
+
+    style SPRINT1 fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    style SPRINT2 fill:#dcfce7,stroke:#22c55e,color:#14532d
+    style SPRINT3 fill:#fef9c3,stroke:#eab308,color:#713f12
+    style SPRINT4 fill:#fce7f3,stroke:#ec4899,color:#831843
+    style BEDROCK fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    style STORAGE fill:#f3f4f6,stroke:#9ca3af,color:#374151
