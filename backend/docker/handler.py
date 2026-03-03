@@ -1,6 +1,10 @@
 import json
 import os
+import re
+import shutil
+import tempfile
 import uuid
+import zipfile
 import boto3
 from datetime import datetime
 
@@ -16,8 +20,47 @@ ses = boto3.client("ses", region_name=os.environ["AWS_REGION"])
 BUCKET = os.environ["S3_BUCKET"]
 SES_FROM = os.environ["SES_FROM_EMAIL"]
 
+# Maximum allowed size for images ZIP (20 MB)
+MAX_ZIP_SIZE = 20_000_000
 
-def lambda_handler(event, context):
+
+def lambda_handler(event: dict, context) -> dict:
+    """Route requests to the appropriate handler based on resource path."""
+    resource = event.get("resource", "")
+    method = event.get("httpMethod", "")
+
+    if resource == "/upload-url" and method == "POST":
+        return _handle_upload_url(event)
+    elif resource == "/process" and method == "POST":
+        return _handle_process(event)
+    else:
+        return _resp(404, {"error": "Not found"})
+
+
+def _handle_upload_url(event: dict) -> dict:
+    """Generate a pre-signed S3 PUT URL for uploading an images ZIP."""
+    job_id = str(uuid.uuid4())[:8]
+    s3_key = f"uploads/{job_id}/images.zip"
+
+    presigned_url = s3.generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": BUCKET,
+            "Key": s3_key,
+            "ContentType": "application/zip",
+        },
+        ExpiresIn=900,  # 15 minutes to complete upload
+    )
+
+    return _resp(200, {
+        "upload_url": presigned_url,
+        "images_s3_key": s3_key,
+        "job_id": job_id,
+    })
+
+
+def _handle_process(event: dict) -> dict:
+    """Run the full annotation pipeline (parse → classify → review → screenshot → PDF → SES)."""
     body = json.loads(event.get("body", "{}"))
 
     html_content = body.get("html_content", "")
@@ -25,6 +68,8 @@ def lambda_handler(event, context):
     subject_line = body.get("subject_line", "")
     preheader_text = body.get("preheader_text", "")
     recipient_email = body.get("recipient_email", "")
+    images_s3_key = body.get("images_s3_key", "")
+    job_id = body.get("job_id", "") or str(uuid.uuid4())[:8]
 
     if not html_content or not recipient_email:
         return _resp(400, {"error": "html_content and recipient_email are required."})
@@ -38,10 +83,23 @@ def lambda_handler(event, context):
     if not any(html_lower.startswith(tag) for tag in ["<html", "<!doctype", "<head", "<body"]):
         return _resp(400, {"error": "INVALID_HTML", "message": "File does not appear to be valid HTML."})
 
-    job_id = str(uuid.uuid4())[:8]
+    # SEC-3: Extract user email from JWT claims for history path
+    user_email = (
+        event.get("requestContext", {})
+        .get("authorizer", {})
+        .get("claims", {})
+        .get("email", recipient_email)
+    )
+
+    work_dir = None
     s3_prefix = f"pdfs/{job_id}"
 
     try:
+        # If images ZIP was uploaded, extract and rewrite HTML image paths
+        if images_s3_key:
+            work_dir = _extract_images_zip(images_s3_key)
+            html_content = _rewrite_image_paths(html_content, work_dir)
+
         # 1. Parse all links from HTML
         raw_links = extract_links(html_content)
 
@@ -52,7 +110,7 @@ def lambda_handler(event, context):
         review = review_email(html_content, raw_links, subject_line, preheader_text)
 
         # 4. Screenshots via Playwright headless Chromium
-        desktop_bytes, mobile_bytes = capture_screenshots(html_content)
+        desktop_bytes, mobile_bytes = capture_screenshots(html_content, work_dir=work_dir)
 
         # 5. Annotate screenshots with lettered callouts
         ann_desktop = annotate_screenshot(desktop_bytes, classified, "desktop")
@@ -82,7 +140,7 @@ def lambda_handler(event, context):
         # 9. Send SES email with review summary + PDF link
         _send_email(recipient_email, filename, subject_line, pdf_url, review)
 
-        # 10. Persist job record (includes review summary for History page)
+        # 10. Persist job record (SEC-3: use JWT email for history path)
         job_record = {
             "job_id": job_id,
             "filename": filename,
@@ -98,7 +156,7 @@ def lambda_handler(event, context):
         }
         s3.put_object(
             Bucket=BUCKET,
-            Key=f"history/{recipient_email}/{job_id}.json",
+            Key=f"history/{user_email}/{job_id}.json",
             Body=json.dumps(job_record),
             ContentType="application/json",
         )
@@ -114,9 +172,125 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"[ERROR] job={job_id} error={e}")
         return _resp(500, {"error": str(e)})
+    finally:
+        # Clean up temp directory and uploaded ZIP from S3
+        if work_dir and os.path.isdir(work_dir):
+            shutil.rmtree(work_dir, ignore_errors=True)
+        if images_s3_key:
+            try:
+                s3.delete_object(Bucket=BUCKET, Key=images_s3_key)
+            except Exception as cleanup_err:
+                print(f"[WARN] Failed to delete uploaded ZIP: {cleanup_err}")
 
 
-def _send_email(to, filename, subject_line, pdf_url, review):
+def _extract_images_zip(images_s3_key: str) -> str:
+    """Download and extract images ZIP from S3 into a temp directory."""
+    work_dir = tempfile.mkdtemp(prefix="email_images_")
+    zip_path = os.path.join(work_dir, "images.zip")
+
+    # Download ZIP from S3
+    s3.download_file(BUCKET, images_s3_key, zip_path)
+
+    # Validate ZIP size
+    zip_size = os.path.getsize(zip_path)
+    if zip_size > MAX_ZIP_SIZE:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise ValueError(f"Images ZIP exceeds {MAX_ZIP_SIZE // 1_000_000} MB limit.")
+
+    # Extract ZIP contents (images only, skip dangerous paths)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            # Skip directories, hidden files, and path traversal attempts
+            if member.is_dir():
+                continue
+            if member.filename.startswith((".", "/", "..")) or ".." in member.filename:
+                continue
+            # Only extract image files
+            lower_name = member.filename.lower()
+            if not lower_name.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")):
+                continue
+            zf.extract(member, work_dir)
+
+    # Remove the ZIP file after extraction
+    os.unlink(zip_path)
+    return work_dir
+
+
+def _rewrite_image_paths(html_content: str, work_dir: str) -> str:
+    """Rewrite image src and CSS url() references to use absolute file:// paths."""
+    # Build a map of filename -> absolute path for all extracted images
+    image_map: dict[str, str] = {}
+    for root, _dirs, files in os.walk(work_dir):
+        for fname in files:
+            abs_path = os.path.join(root, fname)
+            # Map both the bare filename and the relative path from work_dir
+            rel_path = os.path.relpath(abs_path, work_dir)
+            image_map[fname.lower()] = abs_path
+            image_map[rel_path.lower()] = abs_path
+
+    def _replace_src(match: re.Match) -> str:
+        """Replace an image src attribute value with a file:// path."""
+        prefix = match.group(1)  # 'src="' or "src='"
+        original = match.group(2)
+        suffix = match.group(3)  # closing quote
+
+        # Skip data URIs, absolute URLs, and already-rewritten paths
+        if original.startswith(("data:", "http://", "https://", "file://")):
+            return match.group(0)
+
+        # Try to find the image in our extracted files
+        lookup = original.lower().lstrip("./")
+        if lookup in image_map:
+            return f'{prefix}file://{image_map[lookup]}{suffix}'
+
+        # Try bare filename as fallback
+        bare = os.path.basename(lookup)
+        if bare in image_map:
+            return f'{prefix}file://{image_map[bare]}{suffix}'
+
+        return match.group(0)
+
+    def _replace_css_url(match: re.Match) -> str:
+        """Replace a CSS url() value with a file:// path."""
+        prefix = match.group(1)  # 'url('
+        quote = match.group(2) or ""
+        original = match.group(3)
+        suffix = match.group(4)  # closing paren
+
+        if original.startswith(("data:", "http://", "https://", "file://")):
+            return match.group(0)
+
+        lookup = original.lower().lstrip("./")
+        if lookup in image_map:
+            return f'{prefix}{quote}file://{image_map[lookup]}{quote}{suffix}'
+
+        bare = os.path.basename(lookup)
+        if bare in image_map:
+            return f'{prefix}{quote}file://{image_map[bare]}{quote}{suffix}'
+
+        return match.group(0)
+
+    # Rewrite src="..." and src='...' attributes
+    html_content = re.sub(
+        r'''(src\s*=\s*["'])([^"']+)(["'])''',
+        _replace_src,
+        html_content,
+        flags=re.IGNORECASE,
+    )
+
+    # Rewrite CSS url(...) references
+    html_content = re.sub(
+        r'''(url\s*\()(['"]?)([^)'"]+)(['"]?\))''',
+        _replace_css_url,
+        html_content,
+        flags=re.IGNORECASE,
+    )
+
+    return html_content
+
+
+def _send_email(to: str, filename: str, subject_line: str, pdf_url: str, review: dict) -> None:
+    """Send SES email with review summary and PDF download link."""
     score = review.get("overall_score")
     counts = review.get("issue_counts", {})
     summary = review.get("overall_summary", "")
@@ -196,7 +370,8 @@ def _send_email(to, filename, subject_line, pdf_url, review):
     )
 
 
-def _resp(status_code, body):
+def _resp(status_code: int, body: dict) -> dict:
+    """Build an API Gateway proxy response."""
     return {
         "statusCode": status_code,
         "headers": {

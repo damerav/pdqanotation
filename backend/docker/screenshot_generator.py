@@ -1,14 +1,23 @@
-import base64
 import tempfile
 import os
 from playwright.sync_api import sync_playwright
 
 
-def capture_screenshots(html_content: str) -> tuple[bytes, bytes]:
-    # Write HTML to a temp file so Playwright can load it via file:// URL
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as f:
-        f.write(html_content)
-        tmp_path = f.name
+def capture_screenshots(html_content: str, work_dir: str | None = None) -> tuple[bytes, bytes]:
+    """Capture desktop and mobile screenshots of HTML content via Playwright."""
+    # If work_dir is provided, write HTML there so relative image paths resolve.
+    # Otherwise fall back to a random temp file.
+    if work_dir:
+        tmp_path = os.path.join(work_dir, "email_render.html")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+    else:
+        tmp_fd = tempfile.NamedTemporaryFile(
+            suffix=".html", delete=False, mode="w", encoding="utf-8",
+        )
+        tmp_fd.write(html_content)
+        tmp_path = tmp_fd.name
+        tmp_fd.close()
 
     try:
         with sync_playwright() as p:
@@ -33,6 +42,8 @@ def capture_screenshots(html_content: str) -> tuple[bytes, bytes]:
 
             browser.close()
     finally:
-        os.unlink(tmp_path)
+        # Clean up the temp HTML file, but NOT the work_dir — handler manages that
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     return desktop_bytes, mobile_bytes

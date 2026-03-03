@@ -21,12 +21,25 @@ class EmailAnnotatorStack(Stack):
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            cors=[
+                s3.CorsRule(
+                    allowed_methods=[s3.HttpMethods.PUT],
+                    allowed_origins=["*"],
+                    allowed_headers=["*"],
+                    max_age=3600,
+                ),
+            ],
             removal_policy=RemovalPolicy.RETAIN,
             lifecycle_rules=[
                 s3.LifecycleRule(
                     id="expire-pdfs-7-days",
                     prefix="pdfs/",
                     expiration=Duration.days(7),
+                ),
+                s3.LifecycleRule(
+                    id="expire-uploads-1-day",
+                    prefix="uploads/",
+                    expiration=Duration.days(1),
                 ),
             ],
         )
@@ -133,6 +146,12 @@ class EmailAnnotatorStack(Stack):
         # POST /process — triggers full pipeline (parse → classify → review → screenshot → PDF → SES)
         process_res = api.root.add_resource("process")
         process_res.add_method("POST", apigw.LambdaIntegration(processor_fn), **auth_opts)
+
+        # POST /upload-url — generates pre-signed S3 URL for images ZIP upload
+        upload_url_res = api.root.add_resource("upload-url")
+        upload_url_res.add_method(
+            "POST", apigw.LambdaIntegration(processor_fn), **auth_opts,
+        )
 
         # GET /jobs — returns job history for the authenticated user
         jobs_res = api.root.add_resource("jobs")

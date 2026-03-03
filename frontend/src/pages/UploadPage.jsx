@@ -1,9 +1,13 @@
 import { useState, useRef } from "react";
 import { fetchAuthSession } from "aws-amplify/auth";
 import { post } from "aws-amplify/api";
+import awsConfig from "../utils/aws-config";
+
+const API_BASE = awsConfig.API.REST.EmailAnnotatorAPI.endpoint;
 
 export default function UploadPage({ userEmail }) {
   const [file, setFile] = useState(null);
+  const [imagesZip, setImagesZip] = useState(null);
   const [subject, setSubject] = useState("");
   const [preheader, setPreheader] = useState("");
   const [recipientEmail, setRecipientEmail] = useState(userEmail);
@@ -11,13 +15,32 @@ export default function UploadPage({ userEmail }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [imagesDragOver, setImagesDragOver] = useState(false);
   const inputRef = useRef();
+  const imagesInputRef = useRef();
 
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
     const dropped = e.dataTransfer.files[0];
     if (dropped?.name.endsWith(".html")) setFile(dropped);
+  }
+
+  function handleImagesDrop(e) {
+    e.preventDefault();
+    setImagesDragOver(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped?.name.endsWith(".zip")) setImagesZip(dropped);
+  }
+
+  function handleImagesChange(e) {
+    const selected = e.target.files[0];
+    if (selected?.name.endsWith(".zip")) setImagesZip(selected);
+  }
+
+  function handleRemoveImages() {
+    setImagesZip(null);
+    if (imagesInputRef.current) imagesInputRef.current.value = "";
   }
 
   async function handleSubmit(e) {
@@ -32,18 +55,61 @@ export default function UploadPage({ userEmail }) {
       const token = session.tokens.idToken.toString();
       const htmlContent = await file.text();
 
+      let imagesS3Key = "";
+      let jobId = "";
+
+      // If images ZIP provided, get pre-signed URL and upload to S3
+      if (imagesZip) {
+        setStatus("uploading-images");
+
+        const uploadUrlResp = await fetch(`${API_BASE}/upload-url`, {
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        });
+
+        if (!uploadUrlResp.ok) {
+          throw new Error("Failed to get upload URL for images.");
+        }
+
+        const uploadUrlData = await uploadUrlResp.json();
+        imagesS3Key = uploadUrlData.images_s3_key;
+        jobId = uploadUrlData.job_id;
+
+        // Upload ZIP directly to S3 via pre-signed URL
+        const putResp = await fetch(uploadUrlData.upload_url, {
+          method: "PUT",
+          headers: { "Content-Type": "application/zip" },
+          body: imagesZip,
+        });
+
+        if (!putResp.ok) {
+          throw new Error("Failed to upload images ZIP to S3.");
+        }
+
+        setStatus("processing");
+      }
+
+      // Build request body — include images key and job_id if images were uploaded
+      const requestBody = {
+        filename: file.name,
+        html_content: htmlContent,
+        subject_line: subject,
+        preheader_text: preheader,
+        recipient_email: recipientEmail || userEmail,
+      };
+      if (imagesS3Key) requestBody.images_s3_key = imagesS3Key;
+      if (jobId) requestBody.job_id = jobId;
+
       const response = await post({
         apiName: "EmailAnnotatorAPI",
         path: "/process",
         options: {
           headers: { Authorization: token },
-          body: {
-            filename: file.name,
-            html_content: htmlContent,
-            subject_line: subject,
-            preheader_text: preheader,
-            recipient_email: recipientEmail || userEmail,
-          },
+          body: requestBody,
         },
       }).response;
 
@@ -53,6 +119,7 @@ export default function UploadPage({ userEmail }) {
         setStatus("success");
         setResult(data);
         setFile(null);
+        setImagesZip(null);
         setSubject("");
         setPreheader("");
       } else {
@@ -74,6 +141,7 @@ export default function UploadPage({ userEmail }) {
         </p>
 
         <form onSubmit={handleSubmit}>
+          {/* HTML file upload zone */}
           <div
             className={`upload-zone ${dragOver ? "drag-over" : ""}`}
             onClick={() => inputRef.current.click()}
@@ -91,6 +159,46 @@ export default function UploadPage({ userEmail }) {
           {file && (
             <div className="selected-file">
               ✅ <strong>{file.name}</strong> ({(file.size / 1024).toFixed(1)} KB)
+            </div>
+          )}
+
+          {/* Images ZIP upload zone (optional) */}
+          <div
+            className={`upload-zone ${imagesDragOver ? "drag-over" : ""}`}
+            style={{
+              marginTop: "1rem",
+              borderStyle: "dashed",
+              background: imagesZip ? "#f0fdf4" : "#fafafa",
+            }}
+            onClick={() => imagesInputRef.current.click()}
+            onDragOver={(e) => { e.preventDefault(); setImagesDragOver(true); }}
+            onDragLeave={() => setImagesDragOver(false)}
+            onDrop={handleImagesDrop}
+          >
+            <input ref={imagesInputRef} type="file" accept=".zip"
+              onChange={handleImagesChange} />
+            <div className="upload-icon">🖼️</div>
+            <p>Drag and drop an images ZIP file here, or click to browse</p>
+            <p className="file-hint">Optional — .zip containing images referenced in your HTML</p>
+          </div>
+
+          {imagesZip && (
+            <div className="selected-file" style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <span>
+                🖼️ <strong>{imagesZip.name}</strong> ({(imagesZip.size / 1024).toFixed(1)} KB)
+              </span>
+              <button
+                type="button"
+                onClick={handleRemoveImages}
+                style={{
+                  background: "none", border: "none", color: "#991b1b",
+                  cursor: "pointer", fontSize: "0.85rem", fontWeight: 600,
+                }}
+              >
+                Remove
+              </button>
             </div>
           )}
 
@@ -113,10 +221,21 @@ export default function UploadPage({ userEmail }) {
           </div>
 
           <button type="submit" className="btn-primary"
-            disabled={!file || status === "processing"}>
-            {status === "processing" ? "Processing…" : "Generate Annotated PDF"}
+            disabled={!file || status === "processing" || status === "uploading-images"}>
+            {status === "uploading-images"
+              ? "Uploading images…"
+              : status === "processing"
+                ? "Processing…"
+                : "Generate Annotated PDF"}
           </button>
         </form>
+
+        {status === "uploading-images" && (
+          <div className="status-banner processing">
+            <span>📤</span>
+            Uploading images ZIP to S3…
+          </div>
+        )}
 
         {status === "processing" && (
           <div className="status-banner processing">
