@@ -24,7 +24,13 @@ RUN dnf install -y \
     alsa-lib \
     nss \
     nspr \
+    dbus-libs \
+    mesa-libgbm \
     && dnf clean all
+
+# Create writable fontconfig cache directory for Lambda
+RUN mkdir -p /tmp/fontconfig && chmod 777 /tmp/fontconfig
+ENV FONTCONFIG_PATH=/tmp/fontconfig
 
 # Install Python dependencies
 COPY requirements.txt .

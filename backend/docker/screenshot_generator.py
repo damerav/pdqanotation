@@ -23,7 +23,16 @@ def capture_screenshots(html_content: str, work_dir: str | None = None) -> tuple
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--single-process",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--disable-software-rasterizer",
+                    "--font-render-hinting=none",
+                ],
             )
 
             # Desktop — Outlook-like 600px wide email client viewport
