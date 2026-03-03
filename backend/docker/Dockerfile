@@ -30,7 +30,8 @@ RUN dnf install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright and its Chromium browser
+# Install Playwright Chromium to a fixed path that Lambda can access
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 RUN playwright install chromium
 
 # Copy Lambda handler and modules

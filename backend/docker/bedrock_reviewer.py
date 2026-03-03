@@ -12,8 +12,8 @@ from bs4 import BeautifulSoup
 
 bedrock = boto3.client("bedrock-runtime")
 
-# Claude 3 Sonnet — more capable than Haiku, better for nuanced review tasks
-REVIEW_MODEL = "anthropic.claude-3-sonnet-20240229-v1:0"
+# Claude 3.5 Haiku — active model, capable enough for nuanced review tasks
+REVIEW_MODEL = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 
 SYSTEM_PROMPT = """You are a senior email marketing quality assurance specialist with deep expertise in:
 - HTML email development and rendering across clients

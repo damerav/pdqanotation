@@ -2,7 +2,7 @@ import json
 import boto3
 
 bedrock = boto3.client("bedrock-runtime")
-MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
+MODEL_ID = "us.anthropic.claude-3-haiku-20240307-v1:0"
 
 SYSTEM = """You are an email marketing analyst. Classify each hyperlink from an HTML email campaign.
 

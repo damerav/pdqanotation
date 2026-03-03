@@ -89,6 +89,7 @@ class EmailAnnotatorStack(Stack):
             environment={
                 "S3_BUCKET": bucket.bucket_name,
                 "SES_FROM_EMAIL": ses_from_email,
+                "PLAYWRIGHT_BROWSERS_PATH": "/opt/pw-browsers",
             },
         )
 
@@ -102,7 +103,8 @@ class EmailAnnotatorStack(Stack):
             actions=["bedrock:InvokeModel"],
             resources=[
                 "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-                "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0",
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0",
+                f"arn:aws:bedrock:us-east-1:{self.account}:inference-profile/us.anthropic.*",
             ],
         ))
 
