@@ -1,0 +1,12 @@
+{
+  "resource": "/process",
+  "httpMethod": "POST",
+  "body": "{\"html_content\":\"<html><body><h1>Test Email</h1><p>Hello world</p><a href=\\\"https://example.com\\\">Click here</a></body></html>\",\"filename\":\"test.html\",\"recipient_email\":\"damerav@gmail.com\",\"subject_line\":\"Test Subject\",\"preheader_text\":\"Test Preheader\"}",
+  "requestContext": {
+    "authorizer": {
+      "claims": {
+        "email": "damerav@gmail.com"
+      }
+    }
+  }
+}

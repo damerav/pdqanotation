@@ -110,7 +110,11 @@ def _handle_process(event: dict) -> dict:
         review = review_email(html_content, raw_links, subject_line, preheader_text)
 
         # 4. Screenshots via Playwright headless Chromium
-        desktop_bytes, mobile_bytes = capture_screenshots(html_content, work_dir=work_dir)
+        # Collect images as base64 so EC2 can render them locally
+        images_b64 = _collect_images_b64(work_dir) if work_dir else {}
+        desktop_bytes, mobile_bytes = capture_screenshots(
+            html_content, work_dir=work_dir, images_b64=images_b64,
+        )
 
         # 5. Annotate screenshots with lettered callouts
         ann_desktop = annotate_screenshot(desktop_bytes, classified, "desktop")
@@ -316,6 +320,21 @@ def _rewrite_image_paths(html_content: str, work_dir: str) -> str:
     )
 
     return html_content
+
+
+def _collect_images_b64(work_dir: str) -> dict[str, str]:
+    """Collect all extracted images as base64-encoded strings keyed by relative path."""
+    import base64 as b64
+    images: dict[str, str] = {}
+    for root, _dirs, files in os.walk(work_dir):
+        for fname in files:
+            abs_path = os.path.join(root, fname)
+            rel_path = os.path.relpath(abs_path, work_dir).replace("\\", "/")
+            lower = fname.lower()
+            if lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")):
+                with open(abs_path, "rb") as f:
+                    images[rel_path] = b64.b64encode(f.read()).decode("ascii")
+    return images
 
 
 def _send_email(to: str, filename: str, subject_line: str, pdf_url: str, review: dict) -> None:

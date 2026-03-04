@@ -1,8 +1,11 @@
 import json
+import re
 import boto3
 
 bedrock = boto3.client("bedrock-runtime")
-MODEL_ID = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+# Amazon Nova Micro — fast, cheap, good for structured JSON output
+MODEL_ID = "amazon.nova-micro-v1:0"
 
 SYSTEM = """You are an email marketing analyst. Classify each hyperlink from an HTML email campaign.
 
@@ -16,6 +19,7 @@ One entry per input link, same order."""
 
 
 def classify_links(raw_links: list[dict]) -> list[dict]:
+    """Classify email links using Amazon Nova Micro via Bedrock."""
     if not raw_links:
         return []
 
@@ -25,16 +29,26 @@ def classify_links(raw_links: list[dict]) -> list[dict]:
     ])
 
     body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 1024,
-        "system": SYSTEM,
-        "messages": [{"role": "user", "content": f"Classify these links:\n{payload}"}],
+        "inferenceConfig": {"maxTokens": 1024},
+        "system": [{"text": SYSTEM}],
+        "messages": [{"role": "user", "content": [
+            {"text": f"Classify these links:\n{payload}"}
+        ]}],
     })
 
     try:
         resp = bedrock.invoke_model(modelId=MODEL_ID, body=body)
-        text = json.loads(resp["body"].read())["content"][0]["text"]
-        classifications = json.loads(text).get("links", [])
+        raw = json.loads(resp["body"].read(), strict=False)
+        text = raw["output"]["message"]["content"][0]["text"]
+        # Strip accidental markdown code fences
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        # Remove stray control characters
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', text)
+        classifications = json.loads(text, strict=False).get("links", [])
     except Exception as e:
         print(f"[WARN] Bedrock classification failed: {e}. Using fallback labels.")
         classifications = [{"label": f"Link {i+1}", "include": True} for i in range(len(raw_links))]

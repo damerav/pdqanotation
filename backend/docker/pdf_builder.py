@@ -9,19 +9,22 @@ from reportlab.platypus import (
 )
 
 W, H = A4
-MARGIN = 0.6 * inch
+MARGIN = 0.5 * inch
 
 # Severity color map
 SEV_COLORS = {
-    "critical": ("#991b1b", "#fee2e2"),  # (text, background)
+    "critical": ("#991b1b", "#fee2e2"),
     "warning":  ("#92400e", "#fef3c7"),
     "info":     ("#1d4ed8", "#dbeafe"),
 }
-CATEGORY_ORDER = ["Links", "Accessibility", "Compliance", "Content", "Deliverability", "Technical"]
+CATEGORY_ORDER = [
+    "Links", "Accessibility", "Compliance", "Content", "Deliverability", "Technical",
+]
 
 
 def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
               review: dict, subject: str = "", preheader: str = "") -> bytes:
+    """Build the annotated PDF with review report, annotated screenshots, and link table."""
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
                             leftMargin=MARGIN, rightMargin=MARGIN,
@@ -29,6 +32,7 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
 
     styles = getSampleStyleSheet()
     avail_w = W - 2 * MARGIN
+    avail_h = H - 2 * MARGIN
 
     # Style definitions
     h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=16,
@@ -40,12 +44,12 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
     body = ParagraphStyle("body", parent=styles["Normal"], fontSize=9, leading=14)
     small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8,
                             textColor=colors.HexColor("#9ca3af"))
-    label = ParagraphStyle("label", parent=styles["Normal"], fontSize=8,
+    label_style = ParagraphStyle("label", parent=styles["Normal"], fontSize=8,
                             textColor=colors.HexColor("#9ca3af"))
 
     story = []
 
-    # ── PAGE 1: Review Report ──────────────────────────────────────────────
+    # ── PAGE 1+: Review Report ─────────────────────────────────────────
     story.append(Paragraph("Email Campaign — Quality Review Report", h1))
     if subject:
         story.append(Paragraph(f"<b>Subject:</b> {subject}", meta))
@@ -91,7 +95,6 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
     # Issues grouped by category
     issues = review.get("issues", [])
     if issues:
-        # Group by category, respecting the defined order
         grouped = {cat: [] for cat in CATEGORY_ORDER}
         grouped["Other"] = []
         for issue in issues:
@@ -116,7 +119,8 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
                 )
                 title_cell = Paragraph(
                     f'<b>{issue.get("title", "")}</b><br/>'
-                    f'<font size="8" color="#6b7280">{issue.get("description", "")[:200]}</font>',
+                    f'<font size="8" color="#6b7280">'
+                    f'{issue.get("description", "")[:200]}</font>',
                     body
                 )
                 rec_cell = Paragraph(
@@ -125,15 +129,12 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
                 )
                 rows.append([sev_cell, title_cell, rec_cell])
 
-            col_w = [0.8 * inch, (avail_w - 0.8 * inch) * 0.52, (avail_w - 0.8 * inch) * 0.48]
+            col_w = [
+                0.8 * inch,
+                (avail_w - 0.8 * inch) * 0.52,
+                (avail_w - 0.8 * inch) * 0.48,
+            ]
             tbl = Table(rows, colWidths=col_w, repeatRows=1)
-
-            row_bgs = [colors.HexColor("#f9fafb")]
-            for issue in cat_issues:
-                sev = issue.get("severity", "info")
-                _, bg_hex = SEV_COLORS.get(sev, ("#374151", "#f9fafb"))
-                row_bgs.append(colors.HexColor(bg_hex))
-
             tbl.setStyle(TableStyle([
                 ("BACKGROUND",   (0, 0), (-1, 0),  colors.HexColor("#1a1a2e")),
                 ("TEXTCOLOR",    (0, 0), (-1, 0),  colors.white),
@@ -146,69 +147,95 @@ def build_pdf(desktop_img: bytes, mobile_img: bytes, links: list[dict],
                 ("TOPPADDING",   (0, 0), (-1, -1), 4),
                 ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
             ]))
-            # Apply per-row severity background colors
             for row_idx, issue in enumerate(cat_issues, start=1):
                 sev = issue.get("severity", "info")
                 _, bg_hex = SEV_COLORS.get(sev, ("#374151", "#f9fafb"))
                 tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor(bg_hex)),
+                    ("BACKGROUND", (0, row_idx), (-1, row_idx),
+                     colors.HexColor(bg_hex)),
                 ]))
 
             story.append(tbl)
             story.append(Spacer(1, 0.1 * inch))
     else:
-        story.append(Paragraph("No issues identified. The email passed all automated checks.", body))
+        story.append(Paragraph(
+            "No issues identified. The email passed all automated checks.", body))
 
     story.append(PageBreak())
 
-    # ── PAGE 2: Annotated Desktop Screenshot ──────────────────────────────
+    # ── PAGE: Annotated Desktop Screenshot + Link Reference ───────────
     story.append(Paragraph("Email Campaign — Annotated PDF", h1))
     if subject:
         story.append(Paragraph(f"<b>Subject:</b> {subject}", meta))
-    story.append(Spacer(1, 0.1 * inch))
-    story.append(Paragraph("Desktop View (1200 px — Outlook / Microsoft 365)", label))
     story.append(Spacer(1, 0.08 * inch))
-    story.append(RLImage(io.BytesIO(desktop_img), width=avail_w, height=avail_w * 0.58))
-    story.append(PageBreak())
 
-    # ── PAGE 3: Annotated Mobile Screenshot ───────────────────────────────
-    story.append(Paragraph("Mobile View (390 px — iPhone 14)", label))
-    story.append(Spacer(1, 0.08 * inch))
-    mob_w = avail_w * 0.38
-    story.append(RLImage(io.BytesIO(mobile_img), width=mob_w, height=mob_w * 2.16))
-    story.append(PageBreak())
-
-    # ── PAGE 4: Link Reference Table ──────────────────────────────────────
-    story.append(Paragraph("Link Reference Table", h1))
-    story.append(Spacer(1, 0.15 * inch))
-
+    # Link reference table — compact, at the top of the annotated page
     if links:
-        rows = [["Ref", "Label", "URL"]]
+        story.append(Paragraph("Link Reference", h2))
+        ref_rows = [["Ref", "Label", "URL"]]
         for lnk in links:
-            rows.append([
+            ref_rows.append([
                 Paragraph(f"<b>{lnk['letter']}</b>", body),
-                Paragraph(lnk["label"], body),
-                Paragraph(f'<font size="7">{lnk["url"]}</font>', body),
+                Paragraph(lnk["label"], small),
+                Paragraph(
+                    f'<font size="6">{lnk["url"]}</font>', small),
             ])
 
-        col_w = [0.45 * inch, 1.7 * inch, avail_w - 2.15 * inch]
-        tbl = Table(rows, colWidths=col_w, repeatRows=1)
-        tbl.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (-1, 0),  colors.HexColor("#1a1a2e")),
-            ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
-            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
-            ("FONTSIZE",      (0, 0), (-1, 0),  9),
-            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
-            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
+        ref_col_w = [0.35 * inch, 1.4 * inch, avail_w - 1.75 * inch]
+        ref_tbl = Table(ref_rows, colWidths=ref_col_w, repeatRows=1)
+        ref_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, 0), 7),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#f9fafb")]),
+            ("GRID",          (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
             ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
-            ("TOPPADDING",    (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+            ("TOPPADDING",    (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ]))
-        story.append(tbl)
-    else:
-        story.append(Paragraph("No annotated links found in this email.", small))
+        story.append(ref_tbl)
+        story.append(Spacer(1, 0.1 * inch))
+
+    # Desktop screenshot — fill remaining page width
+    story.append(Paragraph(
+        "Desktop View (1200 px — Outlook / Microsoft 365)", label_style))
+    story.append(Spacer(1, 0.05 * inch))
+
+    # Use the full available width; let ReportLab scale height proportionally
+    from PIL import Image as PILImage
+    desk_pil = PILImage.open(io.BytesIO(desktop_img))
+    desk_w, desk_h = desk_pil.size
+    desk_aspect = desk_h / desk_w
+    img_w = avail_w
+    img_h = img_w * desk_aspect
+    # Cap height so it doesn't overflow the page
+    max_img_h = avail_h * 0.65
+    if img_h > max_img_h:
+        img_h = max_img_h
+
+    story.append(RLImage(io.BytesIO(desktop_img), width=img_w, height=img_h))
+    story.append(PageBreak())
+
+    # ── PAGE: Annotated Mobile Screenshot ─────────────────────────────
+    story.append(Paragraph("Mobile View (390 px — iPhone 14)", label_style))
+    story.append(Spacer(1, 0.08 * inch))
+
+    mob_pil = PILImage.open(io.BytesIO(mobile_img))
+    mob_w, mob_h = mob_pil.size
+    mob_aspect = mob_h / mob_w
+    # Mobile: use ~40% of page width, scale height proportionally
+    mob_img_w = avail_w * 0.4
+    mob_img_h = mob_img_w * mob_aspect
+    max_mob_h = avail_h * 0.9
+    if mob_img_h > max_mob_h:
+        mob_img_h = max_mob_h
+        mob_img_w = mob_img_h / mob_aspect
+
+    story.append(RLImage(io.BytesIO(mobile_img), width=mob_img_w, height=mob_img_h))
 
     doc.build(story)
     return buf.getvalue()

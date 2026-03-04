@@ -7,13 +7,14 @@ severity and category, plus an overall score and executive summary.
 """
 
 import json
+import re
 import boto3
 from bs4 import BeautifulSoup
 
 bedrock = boto3.client("bedrock-runtime")
 
-# Claude 3.5 Haiku — active model, capable enough for nuanced review tasks
-REVIEW_MODEL = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+# Amazon Nova Pro — capable model for nuanced quality review tasks
+REVIEW_MODEL = "amazon.nova-pro-v1:0"
 
 SYSTEM_PROMPT = """You are a senior email marketing quality assurance specialist with deep expertise in:
 - HTML email development and rendering across clients
@@ -156,6 +157,8 @@ def review_email(html_content: str, links: list[dict], subject: str = "", prehea
 
     # Truncate HTML for the LLM — send first 8000 chars which covers most email structure
     html_sample = html_content[:8000]
+    # Remove control characters that would break JSON serialisation
+    html_sample = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', html_sample)
 
     user_message = f"""Please review this email campaign.
 
@@ -167,16 +170,17 @@ HTML SOURCE (first 8000 characters):
 """
 
     body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 4096,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_message}],
-        "temperature": 0.1,
+        "inferenceConfig": {"maxTokens": 4096, "temperature": 0.1},
+        "system": [{"text": SYSTEM_PROMPT}],
+        "messages": [{"role": "user", "content": [{"text": user_message}]}],
     })
 
     try:
         resp = bedrock.invoke_model(modelId=REVIEW_MODEL, body=body)
-        raw = json.loads(resp["body"].read())["content"][0]["text"]
+        resp_body = resp["body"].read()
+        # Parse Bedrock envelope — use strict=False for control chars
+        raw = json.loads(resp_body, strict=False)[
+            "output"]["message"]["content"][0]["text"]
 
         # Strip any accidental markdown code fences
         raw = raw.strip()
@@ -185,7 +189,10 @@ HTML SOURCE (first 8000 characters):
             if raw.startswith("json"):
                 raw = raw[4:]
 
-        report = json.loads(raw)
+        # Remove stray control characters that Nova sometimes embeds
+        raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', raw)
+
+        report = json.loads(raw, strict=False)
         return _validate_report(report)
 
     except Exception as e:

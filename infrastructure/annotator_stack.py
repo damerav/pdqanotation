@@ -89,22 +89,21 @@ class EmailAnnotatorStack(Stack):
             environment={
                 "S3_BUCKET": bucket.bucket_name,
                 "SES_FROM_EMAIL": ses_from_email,
-                "PLAYWRIGHT_BROWSERS_PATH": "/opt/pw-browsers",
+                "SCREENSHOT_SERVICE_URL": "http://54.81.69.58:5000",
             },
         )
 
         bucket.grant_read_write(processor_fn)
 
-        # Bedrock permissions — both models used in the pipeline:
-        #   Claude 3 Haiku  → fast link classification (bedrock_classifier.py)
-        #   Claude 3 Sonnet → comprehensive email quality review (bedrock_reviewer.py)
+        # Bedrock permissions — Amazon Nova models used in the pipeline:
+        #   Nova Micro → fast link classification (bedrock_classifier.py)
+        #   Nova Pro   → comprehensive email quality review (bedrock_reviewer.py)
         processor_fn.add_to_role_policy(iam.PolicyStatement(
             sid="BedrockInvokeModels",
             actions=["bedrock:InvokeModel"],
             resources=[
-                "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-                "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0",
-                f"arn:aws:bedrock:us-east-1:{self.account}:inference-profile/us.anthropic.*",
+                "arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0",
+                "arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0",
             ],
         ))
 

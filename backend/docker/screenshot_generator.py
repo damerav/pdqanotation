@@ -1,58 +1,53 @@
-import tempfile
+"""
+screenshot_generator.py
+
+Captures desktop (1200px) and mobile (390px) screenshots of HTML email content.
+
+Delegates to an EC2-hosted Flask microservice running Playwright + Chromium.
+The Lambda sends HTML content via HTTP POST and receives base64-encoded PNGs.
+"""
+
+import base64
+import json
 import os
-from playwright.sync_api import sync_playwright
+from urllib import request as urllib_request
+from urllib.error import URLError
+
+SCREENSHOT_SERVICE_URL = os.environ.get("SCREENSHOT_SERVICE_URL", "")
 
 
-def capture_screenshots(html_content: str, work_dir: str | None = None) -> tuple[bytes, bytes]:
-    """Capture desktop and mobile screenshots of HTML content via Playwright."""
-    # If work_dir is provided, write HTML there so relative image paths resolve.
-    # Otherwise fall back to a random temp file.
-    if work_dir:
-        tmp_path = os.path.join(work_dir, "email_render.html")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-    else:
-        tmp_fd = tempfile.NamedTemporaryFile(
-            suffix=".html", delete=False, mode="w", encoding="utf-8",
+def capture_screenshots(
+    html_content: str, work_dir: str | None = None
+) -> tuple[bytes, bytes]:
+    """Capture desktop and mobile screenshots via the EC2 screenshot service."""
+    if not SCREENSHOT_SERVICE_URL:
+        raise RuntimeError(
+            "SCREENSHOT_SERVICE_URL not set. Cannot capture screenshots."
         )
-        tmp_fd.write(html_content)
-        tmp_path = tmp_fd.name
-        tmp_fd.close()
+
+    url = f"{SCREENSHOT_SERVICE_URL.rstrip('/')}/screenshot"
+    payload = json.dumps({"html_content": html_content}).encode("utf-8")
+
+    req = urllib_request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--single-process",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--no-zygote",
-                    "--disable-software-rasterizer",
-                    "--font-render-hinting=none",
-                ],
-            )
+        with urllib_request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except URLError as e:
+        raise RuntimeError(f"Screenshot service unreachable: {e}") from e
 
-            # Desktop — Outlook-like 600px wide email client viewport
-            desktop_ctx = browser.new_context(viewport={"width": 1200, "height": 900})
-            desktop_page = desktop_ctx.new_page()
-            desktop_page.goto(f"file://{tmp_path}", wait_until="networkidle")
-            desktop_bytes = desktop_page.screenshot(full_page=True)
-            desktop_ctx.close()
+    if "error" in data:
+        raise RuntimeError(f"Screenshot service error: {data['error']}")
 
-            # Mobile — iPhone 14 dimensions
-            mobile_ctx = browser.new_context(viewport={"width": 390, "height": 844})
-            mobile_page = mobile_ctx.new_page()
-            mobile_page.goto(f"file://{tmp_path}", wait_until="networkidle")
-            mobile_bytes = mobile_page.screenshot(full_page=True)
-            mobile_ctx.close()
+    desktop_bytes = base64.b64decode(data["desktop"])
+    mobile_bytes = base64.b64decode(data["mobile"])
 
-            browser.close()
-    finally:
-        # Clean up the temp HTML file, but NOT the work_dir — handler manages that
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    print(f"[INFO] Desktop screenshot: {len(desktop_bytes)} bytes")
+    print(f"[INFO] Mobile screenshot: {len(mobile_bytes)} bytes")
 
     return desktop_bytes, mobile_bytes
