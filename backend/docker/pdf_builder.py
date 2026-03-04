@@ -121,25 +121,35 @@ def _build_page(
 
     elements.append(Spacer(1, 10))
 
-    # Link index — red circle badge + raw URL on each line
+    # Link index — red circle badge + label (line 1) + URL (line 2)
     if links:
         for lnk in links:
             letter = lnk.get("letter", "?")
             url = lnk.get("url", lnk.get("href", ""))
             label = lnk.get("label", "")
 
-            # Use label text for unsubscribe, raw URL for everything else
-            if "unsubscribe" in label.lower():
-                display = _esc(label)
+            label_esc = _esc(label) if label else ""
+            url_esc = _esc(url)
+
+            if label and "unsubscribe" in label.lower():
+                display = f'<b>{label_esc}</b>'
+            elif label:
+                # Label on first line, URL on second line indented
+                display = (
+                    f'<b>{label_esc}</b><br/>'
+                    f'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'
+                    f'<font size="6" color="#666666">{url_esc}</font>'
+                )
             else:
-                display = _esc(url)
+                display = url_esc
 
             badge_html = (
                 f'<font color="{BADGE_COLOR}"><b>●</b></font>'
                 f'&nbsp;&nbsp;<b>{letter}</b>&nbsp;&nbsp;&nbsp;'
-                f'<font size="7">{display}</font>'
+                f'{display}'
             )
             elements.append(Paragraph(badge_html, link_text))
+            elements.append(Spacer(1, 3))
 
     elements.append(Spacer(1, 12))
 
