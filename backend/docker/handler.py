@@ -109,16 +109,21 @@ def _handle_process(event: dict) -> dict:
         # 3. Bedrock Call #2 — Full email quality review (Claude 3 Sonnet, thorough)
         review = review_email(html_content, raw_links, subject_line, preheader_text)
 
-        # 4. Screenshots via Playwright headless Chromium
-        # Collect images as base64 so EC2 can render them locally
+        # 4. Screenshots + bounding boxes via EC2 Playwright service
         images_b64 = _collect_images_b64(work_dir) if work_dir else {}
-        desktop_bytes, mobile_bytes = capture_screenshots(
-            html_content, work_dir=work_dir, images_b64=images_b64,
+        desktop_bytes, mobile_bytes, desktop_bboxes, mobile_bboxes = (
+            capture_screenshots(
+                html_content, work_dir=work_dir, images_b64=images_b64,
+            )
         )
 
-        # 5. Annotate screenshots with lettered callouts
-        ann_desktop = annotate_screenshot(desktop_bytes, classified, "desktop")
-        ann_mobile = annotate_screenshot(mobile_bytes, classified, "mobile")
+        # 5. Annotate badges directly on the email screenshots
+        ann_desktop = annotate_screenshot(
+            desktop_bytes, classified, "desktop", bboxes=desktop_bboxes,
+        )
+        ann_mobile = annotate_screenshot(
+            mobile_bytes, classified, "mobile", bboxes=mobile_bboxes,
+        )
 
         # 6. Build PDF — includes annotated screenshots, link table, and review report
         pdf_bytes = build_pdf(

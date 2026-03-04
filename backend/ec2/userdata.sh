@@ -36,10 +36,32 @@ def screenshot():
     if not html_content:
         return jsonify({"error": "html_content required"}), 400
     try:
-        desktop_b64, mobile_b64 = _capture(html_content, images)
-        return jsonify({"desktop": desktop_b64, "mobile": mobile_b64}), 200
+        result = _capture(html_content, images)
+        return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def _collect_link_bboxes(page):
+    anchors = page.query_selector_all("a[href]")
+    links_data = []
+    for anchor in anchors:
+        bbox = anchor.bounding_box()
+        href = anchor.get_attribute("href") or ""
+        text = ""
+        try:
+            text = anchor.inner_text().strip()
+        except Exception:
+            pass
+        if bbox and href:
+            center_x = bbox["x"] + bbox["width"] / 2
+            center_y = bbox["y"] + bbox["height"] / 2
+            links_data.append({
+                "href": href,
+                "text": text,
+                "center_x": center_x,
+                "center_y": center_y,
+            })
+    return links_data
 
 def _capture(html_content, images):
     work_dir = tempfile.mkdtemp(prefix="screenshot_")
@@ -55,33 +77,41 @@ def _capture(html_content, images):
         html_path = os.path.join(work_dir, "email_render.html")
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-        file_url = f"file://{html_path}"
+        file_url = "file://" + html_path
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
+
             desktop_page = browser.new_page(viewport={"width": 1200, "height": 900})
             desktop_page.goto(file_url, wait_until="load", timeout=30000)
             desktop_page.wait_for_timeout(2000)
+            desktop_links = _collect_link_bboxes(desktop_page)
             desktop_bytes = desktop_page.screenshot(full_page=True)
             desktop_page.close()
+
             mobile_page = browser.new_page(viewport={"width": 390, "height": 844})
             mobile_page.goto(file_url, wait_until="load", timeout=30000)
             mobile_page.wait_for_timeout(2000)
+            mobile_links = _collect_link_bboxes(mobile_page)
             mobile_bytes = mobile_page.screenshot(full_page=True)
             mobile_page.close()
+
             browser.close()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
-    return (
-        base64.b64encode(desktop_bytes).decode("ascii"),
-        base64.b64encode(mobile_bytes).decode("ascii"),
-    )
+
+    return {
+        "desktop": base64.b64encode(desktop_bytes).decode("ascii"),
+        "mobile": base64.b64encode(mobile_bytes).decode("ascii"),
+        "desktop_links": desktop_links,
+        "mobile_links": mobile_links,
+    }
 
 def _rewrite_file_paths(html_content, work_dir, images):
     image_map = {}
     for rel_path in images.keys():
         abs_path = os.path.join(work_dir, rel_path)
-        parts = rel_path.replace("\\\\", "/").lower().split("/")
+        parts = rel_path.replace("\\", "/").lower().split("/")
         for i in range(len(parts)):
             sub = "/".join(parts[i:])
             if sub not in image_map:
@@ -95,17 +125,17 @@ def _rewrite_file_paths(html_content, work_dir, images):
             path_part = original.replace("file://", "")
             basename = os.path.basename(path_part).lower()
             if basename in image_map:
-                return f'{prefix}file://{image_map[basename]}{suffix}'
-            norm = path_part.replace("\\\\", "/").lower()
+                return prefix + "file://" + image_map[basename] + suffix
+            norm = path_part.replace("\\", "/").lower()
             for key, val in image_map.items():
                 if norm.endswith(key):
-                    return f'{prefix}file://{val}{suffix}'
+                    return prefix + "file://" + val + suffix
             return match.group(0)
         if original.startswith(("data:", "http://", "https://")):
             return match.group(0)
-        lookup = original.replace("\\\\", "/").lower().lstrip("./")
+        lookup = original.replace("\\", "/").lower().lstrip("./")
         if lookup in image_map:
-            return f'{prefix}file://{image_map[lookup]}{suffix}'
+            return prefix + "file://" + image_map[lookup] + suffix
         return match.group(0)
 
     html_content = re.sub(
@@ -121,13 +151,13 @@ def _rewrite_file_paths(html_content, work_dir, images):
             path_part = original.replace("file://", "")
             basename = os.path.basename(path_part).lower()
             if basename in image_map:
-                return f'{prefix}{quote}file://{image_map[basename]}{quote}{suffix}'
+                return prefix + quote + "file://" + image_map[basename] + quote + suffix
             return match.group(0)
         if original.startswith(("data:", "http://", "https://")):
             return match.group(0)
-        lookup = original.replace("\\\\", "/").lower().lstrip("./")
+        lookup = original.replace("\\", "/").lower().lstrip("./")
         if lookup in image_map:
-            return f'{prefix}{quote}file://{image_map[lookup]}{quote}{suffix}'
+            return prefix + quote + "file://" + image_map[lookup] + quote + suffix
         return match.group(0)
 
     html_content = re.sub(

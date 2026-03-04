@@ -2,9 +2,7 @@
 screenshot_generator.py
 
 Captures desktop (1200px) and mobile (390px) screenshots of HTML email content.
-
-Delegates to an EC2-hosted Flask microservice running Playwright + Chromium.
-The Lambda sends HTML content via HTTP POST and receives base64-encoded PNGs.
+Returns screenshots + link bounding boxes for badge placement.
 """
 
 import base64
@@ -17,16 +15,20 @@ SCREENSHOT_SERVICE_URL = os.environ.get("SCREENSHOT_SERVICE_URL", "")
 
 
 def capture_screenshots(
-    html_content: str, work_dir: str | None = None
-) -> tuple[bytes, bytes]:
-    """Capture desktop and mobile screenshots via the EC2 screenshot service."""
+    html_content: str,
+    work_dir: str | None = None,
+    images_b64: dict[str, str] | None = None,
+) -> tuple[bytes, bytes, list[dict], list[dict]]:
+    """Capture screenshots and link bounding boxes via the EC2 service."""
     if not SCREENSHOT_SERVICE_URL:
-        raise RuntimeError(
-            "SCREENSHOT_SERVICE_URL not set. Cannot capture screenshots."
-        )
+        raise RuntimeError("SCREENSHOT_SERVICE_URL not set.")
 
     url = f"{SCREENSHOT_SERVICE_URL.rstrip('/')}/screenshot"
-    payload = json.dumps({"html_content": html_content}).encode("utf-8")
+    payload_dict: dict = {"html_content": html_content}
+    if images_b64:
+        payload_dict["images"] = images_b64
+
+    payload = json.dumps(payload_dict).encode("utf-8")
 
     req = urllib_request.Request(
         url,
@@ -36,7 +38,7 @@ def capture_screenshots(
     )
 
     try:
-        with urllib_request.urlopen(req, timeout=90) as resp:
+        with urllib_request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except URLError as e:
         raise RuntimeError(f"Screenshot service unreachable: {e}") from e
@@ -46,8 +48,10 @@ def capture_screenshots(
 
     desktop_bytes = base64.b64decode(data["desktop"])
     mobile_bytes = base64.b64decode(data["mobile"])
+    desktop_links = data.get("desktop_links", [])
+    mobile_links = data.get("mobile_links", [])
 
-    print(f"[INFO] Desktop screenshot: {len(desktop_bytes)} bytes")
-    print(f"[INFO] Mobile screenshot: {len(mobile_bytes)} bytes")
+    print(f"[INFO] Desktop screenshot: {len(desktop_bytes)} bytes, {len(desktop_links)} link bboxes")
+    print(f"[INFO] Mobile screenshot: {len(mobile_bytes)} bytes, {len(mobile_links)} link bboxes")
 
-    return desktop_bytes, mobile_bytes
+    return desktop_bytes, mobile_bytes, desktop_links, mobile_links
