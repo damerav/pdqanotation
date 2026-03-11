@@ -169,3 +169,15 @@ body {
 .download-link { color: #e94560; text-decoration: none; font-weight: 500; }
 .download-link:hover { text-decoration: underline; }
 .empty-state { text-align: center; color: #9ca3af; padding: 3rem 0; font-size: 0.9rem; }
+
+/* Admin role badge */
+.role-badge {
+  background: rgba(233,69,96,0.15);
+  color: #e94560;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}

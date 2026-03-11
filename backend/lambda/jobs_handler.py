@@ -10,14 +10,23 @@ def lambda_handler(event, context):
     # Extract the caller's email from the Cognito JWT claims
     claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
     user_email = claims.get("email", "")
+    groups = claims.get("cognito:groups", "")
 
     if not user_email:
         return _resp(401, {"error": "Unauthorized"})
 
-    prefix = f"history/{user_email}/"
+    is_admin = "admin" in groups
+
     try:
-        paginator = s3.get_paginator("list_objects_v2")
         jobs = []
+        if is_admin:
+            # Admin sees all jobs across all users
+            prefix = "history/"
+        else:
+            # Regular user sees only their own jobs
+            prefix = f"history/{user_email}/"
+
+        paginator = s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
             for obj in page.get("Contents", []):
                 body = s3.get_object(Bucket=BUCKET, Key=obj["Key"])["Body"].read()

@@ -124,6 +124,43 @@ class EmailAnnotatorStack(Stack):
         )
         bucket.grant_read(jobs_fn)
 
+        # ── 4b. Lambda — Admin user management ──────────────────────────────
+        admin_fn = lambda_.Function(
+            self, "AdminFn",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="admin_handler.lambda_handler",
+            code=lambda_.Code.from_asset("../backend/lambda"),
+            environment={"USER_POOL_ID": user_pool.user_pool_id},
+            timeout=Duration.seconds(15),
+        )
+
+        admin_fn.add_to_role_policy(iam.PolicyStatement(
+            sid="CognitoAdminUserManagement",
+            actions=[
+                "cognito-idp:ListUsers",
+                "cognito-idp:AdminCreateUser",
+                "cognito-idp:AdminDeleteUser",
+                "cognito-idp:AdminAddUserToGroup",
+                "cognito-idp:AdminRemoveUserFromGroup",
+                "cognito-idp:AdminListGroupsForUser",
+            ],
+            resources=[user_pool.user_pool_arn],
+        ))
+
+        # ── 4c. Cognito Groups ───────────────────────────────────────────────
+        cognito.CfnUserPoolGroup(
+            self, "AdminGroup",
+            group_name="admin",
+            user_pool_id=user_pool.user_pool_id,
+            description="Administrators — can manage users and view all data",
+        )
+        cognito.CfnUserPoolGroup(
+            self, "UserGroup",
+            group_name="user",
+            user_pool_id=user_pool.user_pool_id,
+            description="Regular users — can upload emails and view own history",
+        )
+
         # ── 5. API Gateway with Cognito authorizer ───────────────────────────
         api = apigw.RestApi(
             self, "AnnotatorApi",
@@ -157,6 +194,16 @@ class EmailAnnotatorStack(Stack):
         # GET /jobs — returns job history for the authenticated user
         jobs_res = api.root.add_resource("jobs")
         jobs_res.add_method("GET", apigw.LambdaIntegration(jobs_fn), **auth_opts)
+
+        # /admin — admin user management endpoints
+        admin_res = api.root.add_resource("admin")
+        admin_users_res = admin_res.add_resource("users")
+        admin_users_res.add_method("GET", apigw.LambdaIntegration(admin_fn), **auth_opts)
+        admin_users_res.add_method("POST", apigw.LambdaIntegration(admin_fn), **auth_opts)
+        admin_users_res.add_method("DELETE", apigw.LambdaIntegration(admin_fn), **auth_opts)
+
+        admin_role_res = admin_users_res.add_resource("role")
+        admin_role_res.add_method("POST", apigw.LambdaIntegration(admin_fn), **auth_opts)
 
         # ── 6. Outputs ────────────────────────────────────────────────────────
         CfnOutput(self, "UserPoolId",       value=user_pool.user_pool_id)
