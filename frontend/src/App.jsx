@@ -55,7 +55,7 @@ function Shell({ user, signOut }) {
           )}
         </div>
         <div className="nav-user">
-          {isAdmin && <span className="role-badge">Admin</span>}
+          {isAdmin && <span className="role-badge">Admin Role</span>}
           <span className="user-email">{email}</span>
           <button className="signout-btn" onClick={signOut}>Sign Out</button>
         </div>

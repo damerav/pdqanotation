@@ -28,15 +28,21 @@ def annotate_screenshot(
     if not links:
         return img_bytes
 
-    # Build a lookup from href -> bbox center
-    bbox_map: dict[str, tuple[float, float]] = {}
+    # Build a lookup from href -> (center_x, center_y, right_x)
+    bbox_map: dict[str, tuple[float, float, float | None]] = {}
     if bboxes:
         for bb in bboxes:
             href = bb.get("href", "")
             if href and "center_x" in bb and "center_y" in bb:
-                # First match wins (some hrefs appear multiple times)
                 if href not in bbox_map:
-                    bbox_map[href] = (bb["center_x"], bb["center_y"])
+                    bbox_map[href] = (
+                        bb["center_x"],
+                        bb["center_y"],
+                        bb.get("right_x"),
+                    )
+
+    # Offset from the link's right edge to the badge center
+    badge_gap = BADGE_R + 10
 
     n = len(links)
     for i, link in enumerate(links):
@@ -45,13 +51,18 @@ def annotate_screenshot(
         if not letter:
             continue
 
-        # Try to find bbox match
-        cx, cy = None, None
         if url in bbox_map:
-            cx, cy = bbox_map[url]
+            center_x, cy, right_x = bbox_map[url]
+            if right_x is not None:
+                # Place badge just past the right edge of the link
+                cx = min(right_x + badge_gap, width - BADGE_R - 2)
+            else:
+                # Estimate: email content is ~600px centered in viewport,
+                # so content right edge is roughly (width + 600) / 2.
+                content_right = (width + 600) / 2
+                cx = min(content_right + badge_gap, width - BADGE_R - 2)
         else:
-            # Fallback: right margin, evenly spaced
-            cx = float(width - 30)
+            cx = float(width - BADGE_R - 8)
             cy = float((i + 1) * height / (n + 1))
 
         _draw_badge(draw, int(cx), int(cy), letter, font)

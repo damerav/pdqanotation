@@ -55,11 +55,13 @@ def _collect_link_bboxes(page):
         if bbox and href:
             center_x = bbox["x"] + bbox["width"] / 2
             center_y = bbox["y"] + bbox["height"] / 2
+            right_x = bbox["x"] + bbox["width"]
             links_data.append({
                 "href": href,
                 "text": text,
                 "center_x": center_x,
                 "center_y": center_y,
+                "right_x": right_x,
             })
     return links_data
 
