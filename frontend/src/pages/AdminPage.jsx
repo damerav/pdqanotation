@@ -216,57 +216,65 @@ export default function AdminPage() {
         {error && <p className="empty-state" style={{ color: "#991b1b" }}>{error}</p>}
 
         {!loading && !error && users.length > 0 && (
-          <table className="history-table">
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th style={{ textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.username}>
-                  <td style={{ fontWeight: 500 }}>{u.username}</td>
-                  <td>{u.first_name || ""} {u.last_name || ""}</td>
-                  <td>{u.email}</td>
-                  <td>
-                    <span className={`badge ${u.role === "admin" ? "processing" : "done"}`}>
-                      {u.role}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ fontSize: "0.8rem", color: u.status === "CONFIRMED" ? "#166534" : "#92400e" }}>
-                      {u.status}
-                    </span>
-                  </td>
-                  <td style={{ fontSize: "0.82rem", color: "#6b7280" }}>
-                    {new Date(u.created).toLocaleDateString()}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <button onClick={() => handleToggleRole(u.username, u.role)} style={{
-                      background: "transparent", border: "1px solid #d1d5db",
-                      borderRadius: "5px", padding: "0.25rem 0.6rem",
-                      cursor: "pointer", fontSize: "0.78rem", marginRight: "0.4rem",
-                    }}>
-                      {u.role === "admin" ? "→ User" : "→ Admin"}
-                    </button>
-                    <button onClick={() => handleDeleteUser(u.username)} style={{
-                      background: "transparent", border: "1px solid #fecaca",
-                      borderRadius: "5px", padding: "0.25rem 0.6rem",
-                      cursor: "pointer", fontSize: "0.78rem", color: "#991b1b",
-                    }}>
-                      Delete
-                    </button>
-                  </td>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                  <th style={{ textAlign: "left", padding: "10px 12px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" }}>Username</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" }}>Name</th>
+                  <th style={{ textAlign: "left", padding: "10px 12px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" }}>Email</th>
+                  <th style={{ textAlign: "center", padding: "10px 12px", color: "#6b7280", fontWeight: 600 }}>Role</th>
+                  <th style={{ textAlign: "center", padding: "10px 12px", color: "#6b7280", fontWeight: 600 }}>Status</th>
+                  <th style={{ textAlign: "center", padding: "10px 12px", color: "#6b7280", fontWeight: 600 }}>Created</th>
+                  <th style={{ textAlign: "right", padding: "10px 12px", color: "#6b7280", fontWeight: 600 }}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.username} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "12px", fontWeight: 500 }}>{u.username}</td>
+                    <td style={{ padding: "12px", whiteSpace: "nowrap" }}>
+                      {[u.first_name, u.last_name].filter(Boolean).join(" ") || "—"}
+                    </td>
+                    <td style={{ padding: "12px", color: "#374151" }}>{u.email}</td>
+                    <td style={{ padding: "12px", textAlign: "center" }}>
+                      <span className={`badge ${u.role === "admin" ? "processing" : "done"}`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "center" }}>
+                      <span style={{
+                        fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "99px",
+                        background: u.status === "CONFIRMED" ? "#dcfce7" : "#fef3c7",
+                        color: u.status === "CONFIRMED" ? "#166534" : "#92400e",
+                      }}>
+                        {u.status === "FORCE_CHANGE_PASSWORD" ? "PENDING" : u.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "center", fontSize: "0.82rem", color: "#6b7280", whiteSpace: "nowrap" }}>
+                      {new Date(u.created).toLocaleDateString()}
+                    </td>
+                    <td style={{ padding: "12px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button onClick={() => handleToggleRole(u.username, u.role)} style={{
+                        background: "transparent", border: "1px solid #d1d5db",
+                        borderRadius: "5px", padding: "0.25rem 0.6rem",
+                        cursor: "pointer", fontSize: "0.78rem", marginRight: "0.4rem",
+                      }}>
+                        {u.role === "admin" ? "→ User" : "→ Admin"}
+                      </button>
+                      <button onClick={() => handleDeleteUser(u.username)} style={{
+                        background: "transparent", border: "1px solid #fecaca",
+                        borderRadius: "5px", padding: "0.25rem 0.6rem",
+                        cursor: "pointer", fontSize: "0.78rem", color: "#991b1b",
+                      }}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {!loading && !error && users.length === 0 && (
