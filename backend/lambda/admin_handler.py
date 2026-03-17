@@ -49,6 +49,8 @@ def _list_users() -> dict:
                 users.append({
                     "username": u["Username"],
                     "email": attrs.get("email", ""),
+                    "first_name": attrs.get("given_name", ""),
+                    "last_name": attrs.get("family_name", ""),
                     "status": u["UserStatus"],
                     "enabled": u["Enabled"],
                     "created": u["UserCreateDate"].isoformat(),
@@ -68,32 +70,41 @@ def _list_users() -> dict:
 def _create_user(event: dict) -> dict:
     """Create a new Cognito user and assign them to a group."""
     body = json.loads(event.get("body", "{}"))
+    username = body.get("username", "").strip()
     email = body.get("email", "").strip()
+    first_name = body.get("first_name", "").strip()
+    last_name = body.get("last_name", "").strip()
     role = body.get("role", "user")
     temp_password = body.get("temp_password", "Welcome@123")
 
-    if not email:
-        return _resp(400, {"error": "email is required."})
+    if not username or not email:
+        return _resp(400, {"error": "username and email are required."})
     if role not in ("admin", "user"):
         return _resp(400, {"error": "role must be 'admin' or 'user'."})
+
+    user_attrs = [
+        {"Name": "email", "Value": email},
+        {"Name": "email_verified", "Value": "true"},
+    ]
+    if first_name:
+        user_attrs.append({"Name": "given_name", "Value": first_name})
+    if last_name:
+        user_attrs.append({"Name": "family_name", "Value": last_name})
 
     try:
         cognito.admin_create_user(
             UserPoolId=USER_POOL_ID,
-            Username=email,
-            UserAttributes=[
-                {"Name": "email", "Value": email},
-                {"Name": "email_verified", "Value": "true"},
-            ],
+            Username=username,
+            UserAttributes=user_attrs,
             TemporaryPassword=temp_password,
             DesiredDeliveryMediums=["EMAIL"],
         )
         cognito.admin_add_user_to_group(
-            UserPoolId=USER_POOL_ID, Username=email, GroupName=role,
+            UserPoolId=USER_POOL_ID, Username=username, GroupName=role,
         )
-        return _resp(201, {"message": f"User {email} created with role '{role}'."})
+        return _resp(201, {"message": f"User {username} created with role '{role}'."})
     except cognito.exceptions.UsernameExistsException:
-        return _resp(409, {"error": f"User {email} already exists."})
+        return _resp(409, {"error": f"User {username} already exists."})
     except ClientError as e:
         return _resp(500, {"error": str(e)})
 

@@ -9,7 +9,10 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
   const [newRole, setNewRole] = useState("user");
   const [newPassword, setNewPassword] = useState("Welcome@123");
   const [creating, setCreating] = useState(false);
@@ -50,13 +53,18 @@ export default function AdminPage() {
         method: "POST",
         headers: { Authorization: token, "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: newEmail, role: newRole, temp_password: newPassword,
+          username: newUsername, email: newEmail,
+          first_name: newFirstName, last_name: newLastName,
+          role: newRole, temp_password: newPassword,
         }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Failed to create user");
       setActionMsg(data.message);
+      setNewUsername("");
       setNewEmail("");
+      setNewFirstName("");
+      setNewLastName("");
       setShowCreate(false);
       loadUsers();
     } catch (err) {
@@ -145,10 +153,28 @@ export default function AdminPage() {
           }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
               <div className="field" style={{ marginBottom: 0 }}>
+                <label>Username</label>
+                <input type="text" value={newUsername} required
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="jsmith" />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
                 <label>Email</label>
                 <input type="email" value={newEmail} required
                   onChange={(e) => setNewEmail(e.target.value)}
                   placeholder="user@company.com" />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>First Name</label>
+                <input type="text" value={newFirstName} required
+                  onChange={(e) => setNewFirstName(e.target.value)}
+                  placeholder="John" />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Last Name</label>
+                <input type="text" value={newLastName} required
+                  onChange={(e) => setNewLastName(e.target.value)}
+                  placeholder="Smith" />
               </div>
               <div className="field" style={{ marginBottom: 0 }}>
                 <label>Temporary Password</label>
@@ -193,6 +219,8 @@ export default function AdminPage() {
           <table className="history-table">
             <thead>
               <tr>
+                <th>Username</th>
+                <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
@@ -203,7 +231,9 @@ export default function AdminPage() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.username}>
-                  <td style={{ fontWeight: 500 }}>{u.email || u.username}</td>
+                  <td style={{ fontWeight: 500 }}>{u.username}</td>
+                  <td>{u.first_name || ""} {u.last_name || ""}</td>
+                  <td>{u.email}</td>
                   <td>
                     <span className={`badge ${u.role === "admin" ? "processing" : "done"}`}>
                       {u.role}
