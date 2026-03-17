@@ -24,7 +24,7 @@ class EmailAnnotatorStack(Stack):
             cors=[
                 s3.CorsRule(
                     allowed_methods=[s3.HttpMethods.PUT],
-                    allowed_origins=["*"],
+                    allowed_origins=["https://main.d2ie3k1k9zhei3.amplifyapp.com"],
                     allowed_headers=["*"],
                     max_age=3600,
                 ),
@@ -162,12 +162,13 @@ class EmailAnnotatorStack(Stack):
         )
 
         # ── 5. API Gateway with Cognito authorizer ───────────────────────────
+        amplify_origin = "https://main.d2ie3k1k9zhei3.amplifyapp.com"
         api = apigw.RestApi(
             self, "AnnotatorApi",
             rest_api_name="EmailAnnotatorAPI",
             default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=["GET", "POST", "OPTIONS"],
+                allow_origins=[amplify_origin],
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
                 allow_headers=["Authorization", "Content-Type"],
             ),
         )

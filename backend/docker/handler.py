@@ -429,7 +429,7 @@ def _resp(status_code: int, body: dict) -> dict:
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://main.d2ie3k1k9zhei3.amplifyapp.com",
             "Access-Control-Allow-Headers": "Authorization,Content-Type",
         },
         "body": json.dumps(body),
