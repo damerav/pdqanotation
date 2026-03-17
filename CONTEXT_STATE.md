@@ -1,7 +1,7 @@
 # Email Campaign Annotator — Context State
 
 **Last updated:** March 16, 2026  
-**Last commit:** `296e3ec` on `main`
+**Last commit:** `ec676af` on `main`
 
 ---
 
@@ -24,7 +24,9 @@
 
 | Username | Email | Groups | Status |
 |---|---|---|---|
-| testuser | damerav@gmail.com | admin | CONFIRMED |
+| testuser | damerav@gmail.com | admin, user | CONFIRMED |
+| ksimas | ksimas@pdqcommunications.com | admin | FORCE_CHANGE_PASSWORD |
+| tgarvey | tgarvey@pdqcommunications.com | admin | FORCE_CHANGE_PASSWORD |
 
 Groups created: `admin`, `user`
 
@@ -34,13 +36,14 @@ Groups created: `admin`, `user`
 - To deploy frontend: `npm run build` in `frontend/`, zip `dist/`, upload via `aws amplify create-deployment` + `start-deployment`
 - CDK deploys from `infrastructure/` dir: `cdk deploy --require-approval never -c sesFromEmail=damerav@gmail.com`
 - SES is in sandbox — new recipient emails must be verified via `aws ses verify-email-identity`
-- EC2 access via EC2 Instance Connect: generate temp key, push with `aws ec2-instance-connect send-ssh-public-key`, SSH within 60 seconds
+- EC2 access via EC2 Instance Connect: generate temp key (no passphrase), push with `aws ec2-instance-connect send-ssh-public-key`, SSH within 60 seconds. One command per SSH session.
 
 ## What's Working
 
 - Full annotation pipeline: upload HTML → parse → classify (Bedrock) → review (Bedrock) → screenshot (EC2) → annotate → PDF → S3 → SES email
 - Auth: Cognito login with username/email
-- Admin panel: user management (create, delete, toggle role)
+- Admin panel: user management (create with username/first name/last name/email, delete, toggle role)
+- Admin table: proper layout with inline actions, PENDING status badge, name column
 - History: role-based (admins see all jobs, users see only their own)
 - Nav shows "Admin" tab + "Admin Role" badge for admin users
 - CORS restricted to Amplify domain (API Gateway + S3 + Lambda response headers)
@@ -48,11 +51,16 @@ Groups created: `admin`, `user`
 
 ## Resolved Issues (this session)
 
-- CORS locked down from `*` to `https://main.d2ie3k1k9zhei3.amplifyapp.com` (SEC-18)
-- EC2 screenshot service updated with `right_x` field via EC2 Instance Connect
-- CDK stack redeployed with all CORS + Lambda code changes
+- Redeployed frontend to Amplify (admin panel was missing from live site)
+- Fixed `testuser` admin group membership (was removed during CDK redeploy)
+- Fixed Cognito "Username cannot be email format" error — admin create user now uses separate username field
+- Added Username, First Name, Last Name fields to admin create user form
+- Added Username and Name columns to admin user table
+- Backend `_list_users` now returns `first_name`/`last_name` from Cognito `given_name`/`family_name` attributes
+- Fixed admin table layout: proper spacing, inline action buttons, horizontal scroll, PENDING status badge
 
 ## Remaining TODO
 
 - **SES production access** — Must be requested via AWS Console (SES → Account dashboard → Request production access). Use case: "Transactional email for internal pharma marketing team, ~100 emails/month."
 - **Amplify GitHub connection** — Recreate app via AWS Console with GitHub OAuth to enable auto-deploy on push.
+- **New users (ksimas, tgarvey)** — Still in FORCE_CHANGE_PASSWORD status. They need to log in and set a new password. Their emails also need to be verified in SES (sandbox mode) before they can receive PDFs.
