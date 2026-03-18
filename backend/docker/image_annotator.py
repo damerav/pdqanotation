@@ -28,37 +28,62 @@ def annotate_screenshot(
     if not links:
         return img_bytes
 
-    # Build a lookup from href -> (center_x, center_y, right_x)
-    bbox_map: dict[str, tuple[float, float, float | None]] = {}
+    # Build a lookup from href -> list of (center_x, center_y, right_x, text)
+    bbox_by_href: dict[str, list[dict]] = {}
     if bboxes:
         for bb in bboxes:
             href = bb.get("href", "")
             if href and "center_x" in bb and "center_y" in bb:
-                if href not in bbox_map:
-                    bbox_map[href] = (
-                        bb["center_x"],
-                        bb["center_y"],
-                        bb.get("right_x"),
-                    )
+                bbox_by_href.setdefault(href, []).append(bb)
 
     # Offset from the link's right edge to the badge center
     badge_gap = BADGE_R + 10
 
+    # Track which bboxes have been used so duplicate URLs get different badges
+    used_bboxes: set[int] = set()
+
     n = len(links)
     for i, link in enumerate(links):
         url = link.get("url", link.get("href", ""))
+        anchor = link.get("anchor_text", link.get("label", "")).strip().lower()
         letter = link.get("letter", "")
         if not letter:
             continue
 
-        if url in bbox_map:
-            center_x, cy, right_x = bbox_map[url]
+        candidates = bbox_by_href.get(url, [])
+        best_bb = None
+
+        if candidates:
+            # Try to match by anchor text first (handles duplicate URLs)
+            for j, bb in enumerate(candidates):
+                bb_id = id(bb)
+                if bb_id in used_bboxes:
+                    continue
+                bb_text = bb.get("text", "").strip().lower()
+                if anchor and bb_text and anchor in bb_text or bb_text in anchor:
+                    best_bb = bb
+                    used_bboxes.add(bb_id)
+                    break
+
+            # If no text match, use the first unused bbox for this URL
+            if best_bb is None:
+                for bb in candidates:
+                    bb_id = id(bb)
+                    if bb_id not in used_bboxes:
+                        best_bb = bb
+                        used_bboxes.add(bb_id)
+                        break
+
+            # Last resort: reuse the first bbox
+            if best_bb is None and candidates:
+                best_bb = candidates[0]
+
+        if best_bb:
+            cy = best_bb["center_y"]
+            right_x = best_bb.get("right_x")
             if right_x is not None:
-                # Place badge just past the right edge of the link
                 cx = min(right_x + badge_gap, width - BADGE_R - 2)
             else:
-                # Estimate: email content is ~600px centered in viewport,
-                # so content right edge is roughly (width + 600) / 2.
                 content_right = (width + 600) / 2
                 cx = min(content_right + badge_gap, width - BADGE_R - 2)
         else:
