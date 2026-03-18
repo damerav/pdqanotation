@@ -93,6 +93,8 @@ def _handle_process(event: dict) -> dict:
 
     work_dir = None
     s3_prefix = f"pdfs/{job_id}"
+    # Minimum match confidence before retrying with fuzzy matching
+    MATCH_THRESHOLD = 80
 
     try:
         # If images ZIP was uploaded, extract and rewrite HTML image paths
@@ -117,13 +119,35 @@ def _handle_process(event: dict) -> dict:
             )
         )
 
-        # 5. Annotate badges directly on the email screenshots
-        ann_desktop = annotate_screenshot(
+        # 5. Annotate badges — first pass (exact URL matching)
+        ann_desktop, desktop_stats = annotate_screenshot(
             desktop_bytes, classified, "desktop", bboxes=desktop_bboxes,
         )
-        ann_mobile = annotate_screenshot(
+        ann_mobile, mobile_stats = annotate_screenshot(
             mobile_bytes, classified, "mobile", bboxes=mobile_bboxes,
         )
+
+        avg_confidence = (desktop_stats["confidence"] + mobile_stats["confidence"]) / 2
+        print(f"[INFO] job={job_id} pass=1 desktop={desktop_stats} mobile={mobile_stats}")
+
+        # 5b. Retry with fuzzy matching if confidence is below threshold
+        if avg_confidence < MATCH_THRESHOLD:
+            print(f"[INFO] job={job_id} confidence {avg_confidence}% < {MATCH_THRESHOLD}%, "
+                  "retrying with fuzzy matching")
+            ann_desktop, desktop_stats = annotate_screenshot(
+                desktop_bytes, classified, "desktop",
+                bboxes=desktop_bboxes, fuzzy_match=True,
+            )
+            ann_mobile, mobile_stats = annotate_screenshot(
+                mobile_bytes, classified, "mobile",
+                bboxes=mobile_bboxes, fuzzy_match=True,
+            )
+            avg_confidence = (
+                desktop_stats["confidence"] + mobile_stats["confidence"]
+            ) / 2
+            print(f"[INFO] job={job_id} pass=2 desktop={desktop_stats} mobile={mobile_stats}")
+
+        match_confidence = round(avg_confidence)
 
         # 6. Build PDF — includes annotated screenshots, link table, and review report
         pdf_bytes = build_pdf(
@@ -133,6 +157,7 @@ def _handle_process(event: dict) -> dict:
             review=review,
             subject=subject_line,
             preheader=preheader_text,
+            match_confidence=match_confidence,
         )
 
         # 7. Save PDF to S3
@@ -162,6 +187,7 @@ def _handle_process(event: dict) -> dict:
             "review_score": review.get("overall_score"),
             "review_summary": review.get("overall_summary", ""),
             "issue_counts": review.get("issue_counts", {}),
+            "match_confidence": match_confidence,
         }
         s3.put_object(
             Bucket=BUCKET,
@@ -176,6 +202,7 @@ def _handle_process(event: dict) -> dict:
             "review_score": review.get("overall_score"),
             "issue_counts": review.get("issue_counts", {}),
             "review_summary": review.get("overall_summary", ""),
+            "match_confidence": match_confidence,
         })
 
     except Exception as e:

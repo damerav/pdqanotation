@@ -33,6 +33,7 @@ def build_pdf(
     review: dict,
     subject: str = "",
     preheader: str = "",
+    match_confidence: int | None = None,
 ) -> bytes:
     """Build a 2-page annotated PDF with header blocks and screenshots."""
     buf = io.BytesIO()
@@ -61,6 +62,14 @@ def build_pdf(
         "link_text": link_text,
         "styles": styles,
     }
+
+    confidence_style = ParagraphStyle(
+        "confidence", parent=styles["Normal"], fontSize=9,
+        textColor=colors.HexColor("#6b7280"), fontName="Helvetica",
+        spaceAfter=6,
+    )
+    page_styles["confidence_style"] = confidence_style
+    page_styles["match_confidence"] = match_confidence
 
     # Build page 1 (desktop) and page 2 (mobile) as separate flowable lists
     desktop_elements = _build_page(
@@ -252,6 +261,8 @@ def _build_page(
     meta_style: ParagraphStyle,
     link_text: ParagraphStyle,
     styles,
+    confidence_style: ParagraphStyle | None = None,
+    match_confidence: int | None = None,
 ) -> list:
     """Build the flowable elements for one page (desktop or mobile)."""
     elements = []
@@ -314,6 +325,18 @@ def _build_page(
     render_h = render_w * aspect
 
     elements.append(RLImage(io.BytesIO(screenshot_img), width=render_w, height=render_h))
+
+    # Annotation confidence footer
+    if match_confidence is not None and confidence_style is not None:
+        elements.append(Spacer(1, 8))
+        if match_confidence >= 80:
+            conf_color = "#166534"
+            conf_label = f"Annotation Confidence: {match_confidence}%"
+        else:
+            conf_color = "#991b1b"
+            conf_label = f"⚠ Low Annotation Confidence: {match_confidence}% — badge positions may be approximate"
+        conf_html = f'<font color="{conf_color}">{conf_label}</font>'
+        elements.append(Paragraph(conf_html, confidence_style))
 
     return elements
 
