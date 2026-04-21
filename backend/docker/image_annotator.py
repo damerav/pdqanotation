@@ -13,6 +13,7 @@ def annotate_screenshot(
     viewport: str = "desktop",
     bboxes: list[dict] | None = None,
     fuzzy_match: bool = False,
+    total_extractable: int | None = None,
 ) -> tuple[bytes, dict]:
     """Draw red circle badges on the screenshot at each link location.
 
@@ -20,7 +21,8 @@ def annotate_screenshot(
       - total: number of links with letters
       - matched: number placed using real bounding boxes
       - fallback: number placed at estimated positions
-      - confidence: matched / total as a percentage (0-100)
+      - confidence: matched / total_extractable as a percentage (0-100),
+        falling back to matched / total when total_extractable is not provided
     """
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -86,7 +88,8 @@ def annotate_screenshot(
 
         _draw_badge(draw, int(cx), int(cy), letter, font)
 
-    confidence = round(matched_count / total_count * 100) if total_count > 0 else 100
+    denom = total_extractable if total_extractable is not None and total_extractable > 0 else total_count
+    confidence = round(matched_count / denom * 100) if denom > 0 else 100
 
     out = io.BytesIO()
     img.save(out, format="PNG")

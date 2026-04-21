@@ -41,6 +41,11 @@ class EmailAnnotatorStack(Stack):
                     prefix="uploads/",
                     expiration=Duration.days(1),
                 ),
+                s3.LifecycleRule(
+                    id="expire-html-90-days",
+                    prefix="html/",
+                    expiration=Duration.days(90),
+                ),
             ],
         )
 

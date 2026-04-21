@@ -6,10 +6,11 @@ import tempfile
 import uuid
 import zipfile
 import boto3
+from botocore.exceptions import ClientError
 from datetime import datetime
 
 from html_parser import extract_links
-from bedrock_classifier import classify_links
+from bedrock_classifier import classify_links, assign_letters
 from bedrock_reviewer import review_email
 from screenshot_generator import capture_screenshots
 from image_annotator import annotate_screenshot
@@ -63,6 +64,11 @@ def _handle_process(event: dict) -> dict:
     """Run the full annotation pipeline (parse → classify → review → screenshot → PDF → SES)."""
     body = json.loads(event.get("body", "{}"))
 
+    # Re-run routing: delegate when rerun_job_id is present and html_content is absent
+    rerun_job_id = body.get("rerun_job_id", "")
+    if rerun_job_id and not body.get("html_content", ""):
+        return _handle_rerun(event, body, rerun_job_id)
+
     html_content = body.get("html_content", "")
     filename = body.get("filename", "email.html")
     subject_line = body.get("subject_line", "")
@@ -91,13 +97,128 @@ def _handle_process(event: dict) -> dict:
         .get("email", recipient_email)
     )
 
+    # Capture original HTML before any image path rewriting (Req 1.2)
+    html_content_original: str = html_content
+
+    return _run_pipeline(
+        html_content=html_content,
+        html_content_original=html_content_original,
+        filename=filename,
+        subject_line=subject_line,
+        preheader_text=preheader_text,
+        recipient_email=recipient_email,
+        images_s3_key=images_s3_key,
+        job_id=job_id,
+        user_email=user_email,
+        rerun_from=None,
+    )
+
+
+def _handle_rerun(event: dict, body: dict, rerun_job_id: str) -> dict:
+    """Re-run an existing annotation job using persisted HTML and the latest pipeline."""
+    claims = (
+        event.get("requestContext", {})
+        .get("authorizer", {})
+        .get("claims", {})
+    )
+    # SEC-3: Extract user email from JWT claims
+    user_email = claims.get("email", "")
+    if not user_email:
+        return _resp(400, {"error": "Missing user email in JWT claims."})
+
+    # Determine admin status from Cognito groups
+    groups_raw = claims.get("cognito:groups", "")
+    groups = groups_raw if isinstance(groups_raw, list) else [g.strip() for g in groups_raw.split(",") if g.strip()]
+    is_admin = "admin" in groups
+
+    # Verify ownership: check history/{user_email}/{rerun_job_id}.json exists
+    if not is_admin:
+        try:
+            s3.head_object(Bucket=BUCKET, Key=f"history/{user_email}/{rerun_job_id}.json")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return _resp(403, {
+                    "error": "FORBIDDEN",
+                    "message": "You do not have permission to re-run this job.",
+                })
+            raise
+
+    # Load original HTML from persistent storage
+    try:
+        html_obj = s3.get_object(Bucket=BUCKET, Key=f"html/{rerun_job_id}/original.html")
+        html_content = html_obj["Body"].read().decode("utf-8")
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+            return _resp(404, {
+                "error": "HTML_NOT_FOUND",
+                "message": "Original HTML not available for this job. "
+                           "It may have been processed before this feature was enabled.",
+            })
+        raise
+
+    # Load original job record for field defaults
+    try:
+        record_obj = s3.get_object(
+            Bucket=BUCKET, Key=f"history/{user_email}/{rerun_job_id}.json",
+        )
+        original_record = json.loads(record_obj["Body"].read().decode("utf-8"))
+    except ClientError:
+        # For admins who don't own the job, the record may be under another user's prefix.
+        # Fall back to empty defaults — the HTML is the critical piece.
+        original_record = {}
+
+    # Field defaulting: use request body values if non-empty, else fall back to original record
+    filename = body.get("filename", "") or original_record.get("filename", "email.html")
+    subject_line = body.get("subject_line", "") or original_record.get("subject_line", "")
+    preheader_text = body.get("preheader_text", "") or original_record.get("preheader_text", "")
+
+    # Check for stored images ZIP
+    images_s3_key = ""
+    try:
+        s3.head_object(Bucket=BUCKET, Key=f"html/{rerun_job_id}/images.zip")
+        images_s3_key = f"html/{rerun_job_id}/images.zip"
+    except ClientError:
+        pass  # No images ZIP — proceed without images (Req 6.3)
+
+    # Generate a new job_id for the re-run result
+    job_id = str(uuid.uuid4())[:8]
+
+    # SEC-3: recipient_email from JWT claims, NOT from original job record
+    recipient_email = user_email
+
+    return _run_pipeline(
+        html_content=html_content,
+        html_content_original=html_content,
+        filename=filename,
+        subject_line=subject_line,
+        preheader_text=preheader_text,
+        recipient_email=recipient_email,
+        images_s3_key=images_s3_key,
+        job_id=job_id,
+        user_email=user_email,
+        rerun_from=rerun_job_id,
+    )
+
+
+def _run_pipeline(
+    *,
+    html_content: str,
+    html_content_original: str,
+    filename: str,
+    subject_line: str,
+    preheader_text: str,
+    recipient_email: str,
+    images_s3_key: str,
+    job_id: str,
+    user_email: str,
+    rerun_from: str | None,
+) -> dict:
+    """Execute the full annotation pipeline and persist results."""
     work_dir = None
-    s3_prefix = f"pdfs/{job_id}"
-    # Minimum match confidence before retrying with fuzzy matching
     MATCH_THRESHOLD = 80
 
     try:
-        # If images ZIP was uploaded, extract and rewrite HTML image paths
+        # If images ZIP is available, extract and rewrite HTML image paths
         if images_s3_key:
             work_dir = _extract_images_zip(images_s3_key)
             html_content = _rewrite_image_paths(html_content, work_dir)
@@ -119,28 +240,35 @@ def _handle_process(event: dict) -> dict:
             )
         )
 
-        # 5. Annotate badges — first pass (exact URL matching)
+        # 5. Assign letters using visual order from desktop bounding boxes
+        classified = assign_letters(classified, desktop_bboxes)
+
+        # 6. Annotate badges — first pass (exact URL matching)
         ann_desktop, desktop_stats = annotate_screenshot(
-            desktop_bytes, classified, "desktop", bboxes=desktop_bboxes,
+            desktop_bytes, classified, "desktop",
+            bboxes=desktop_bboxes, total_extractable=len(raw_links),
         )
         ann_mobile, mobile_stats = annotate_screenshot(
-            mobile_bytes, classified, "mobile", bboxes=mobile_bboxes,
+            mobile_bytes, classified, "mobile",
+            bboxes=mobile_bboxes, total_extractable=len(raw_links),
         )
 
         avg_confidence = (desktop_stats["confidence"] + mobile_stats["confidence"]) / 2
         print(f"[INFO] job={job_id} pass=1 desktop={desktop_stats} mobile={mobile_stats}")
 
-        # 5b. Retry with fuzzy matching if confidence is below threshold
+        # 6b. Retry with fuzzy matching if confidence is below threshold
         if avg_confidence < MATCH_THRESHOLD:
             print(f"[INFO] job={job_id} confidence {avg_confidence}% < {MATCH_THRESHOLD}%, "
                   "retrying with fuzzy matching")
             ann_desktop, desktop_stats = annotate_screenshot(
                 desktop_bytes, classified, "desktop",
                 bboxes=desktop_bboxes, fuzzy_match=True,
+                total_extractable=len(raw_links),
             )
             ann_mobile, mobile_stats = annotate_screenshot(
                 mobile_bytes, classified, "mobile",
                 bboxes=mobile_bboxes, fuzzy_match=True,
+                total_extractable=len(raw_links),
             )
             avg_confidence = (
                 desktop_stats["confidence"] + mobile_stats["confidence"]
@@ -149,7 +277,7 @@ def _handle_process(event: dict) -> dict:
 
         match_confidence = round(avg_confidence)
 
-        # 6. Build PDF — includes annotated screenshots, link table, and review report
+        # 7. Build PDF — includes annotated screenshots, link table, and review report
         pdf_bytes = build_pdf(
             desktop_img=ann_desktop,
             mobile_img=ann_mobile,
@@ -160,21 +288,21 @@ def _handle_process(event: dict) -> dict:
             match_confidence=match_confidence,
         )
 
-        # 7. Save PDF to S3
+        # 8. Save PDF to S3
         pdf_key = f"pdfs/{job_id}/{filename.replace('.html', '')}_annotated.pdf"
         s3.put_object(Bucket=BUCKET, Key=pdf_key, Body=pdf_bytes, ContentType="application/pdf")
 
-        # 8. Generate pre-signed URL (7-day expiry)
+        # 9. Generate pre-signed URL (7-day expiry)
         pdf_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": BUCKET, "Key": pdf_key},
             ExpiresIn=604800,
         )
 
-        # 9. Send SES email with review summary + PDF link
+        # 10. Send SES email with review summary + PDF link
         _send_email(recipient_email, filename, subject_line, pdf_url, review)
 
-        # 10. Persist job record (SEC-3: use JWT email for history path)
+        # 11. Persist job record (SEC-3: use JWT email for history path)
         job_record = {
             "job_id": job_id,
             "filename": filename,
@@ -188,6 +316,8 @@ def _handle_process(event: dict) -> dict:
             "review_summary": review.get("overall_summary", ""),
             "issue_counts": review.get("issue_counts", {}),
             "match_confidence": match_confidence,
+            "images_s3_key": images_s3_key or None,
+            "rerun_from": rerun_from,
         }
         s3.put_object(
             Bucket=BUCKET,
@@ -195,6 +325,28 @@ def _handle_process(event: dict) -> dict:
             Body=json.dumps(job_record),
             ContentType="application/json",
         )
+
+        # 12. Persist original HTML for future re-runs (Req 1.1, 1.2, 1.4)
+        try:
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=f"html/{job_id}/original.html",
+                Body=html_content_original,
+                ContentType="text/html",
+            )
+        except Exception as html_persist_err:
+            print(f"[WARN] Failed to persist HTML for job {job_id}: {html_persist_err}")
+
+        # 13. Copy images ZIP to persistent storage for re-runs (Req 6.1)
+        if images_s3_key:
+            try:
+                s3.copy_object(
+                    Bucket=BUCKET,
+                    CopySource={"Bucket": BUCKET, "Key": images_s3_key},
+                    Key=f"html/{job_id}/images.zip",
+                )
+            except Exception as img_persist_err:
+                print(f"[WARN] Failed to persist images ZIP for job {job_id}: {img_persist_err}")
 
         return _resp(200, {
             "job_id": job_id,

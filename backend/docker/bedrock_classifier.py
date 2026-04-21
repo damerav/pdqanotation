@@ -12,7 +12,20 @@ SYSTEM = """You are an email marketing analyst. Classify each hyperlink from an 
 For every link return:
 - label: short human-readable label (e.g. "Header Logo", "Primary CTA", "Prescribing Information",
   "View Online", "Contact Us", "Unsubscribe", "Privacy Policy", "Terms & Conditions")
-- include: true for user-facing content links; false for font stylesheets, tracking pixels, or duplicates
+- include: true or false (see rules below)
+
+INCLUSION RULES — follow these strictly:
+- include: true for ALL user-facing content links, including:
+  - Image-only links with empty anchor text (these are clickable visual elements, use img_alt for label context)
+  - Generic CTA text such as "Click here", "Learn more", "Read more", "Shop now" (these are valid call-to-action links)
+  - Ghost-link CSS overlays (these are intentional clickable regions over visual content)
+  - Any <a href> a user can click to navigate somewhere
+- include: false ONLY for:
+  - Font stylesheets (e.g. fonts.googleapis.com, fonts.gstatic.com)
+  - 1x1 tracking pixels with no clickable area
+  - Protocol-only links (mailto:, tel:, javascript:)
+
+When in doubt, set include: true. It is better to include a borderline link than to miss a valid one.
 
 Return ONLY a JSON object: {"links": [{"label": "...", "include": true/false}, ...]}
 One entry per input link, same order."""
@@ -23,10 +36,14 @@ def classify_links(raw_links: list[dict]) -> list[dict]:
     if not raw_links:
         return []
 
-    payload = json.dumps([
-        {"url": l["url"], "anchor_text": l["anchor_text"], "context": l["context"][:150]}
-        for l in raw_links
-    ])
+    def _build_link_payload(l: dict) -> dict:
+        """Build classifier payload for a single link, including img_alt when present."""
+        entry = {"url": l["url"], "anchor_text": l["anchor_text"], "context": l["context"][:150]}
+        if l.get("img_alt"):
+            entry["img_alt"] = l["img_alt"]
+        return entry
+
+    payload = json.dumps([_build_link_payload(l) for l in raw_links])
 
     body = json.dumps({
         "inferenceConfig": {"maxTokens": 1024},
@@ -53,12 +70,89 @@ def classify_links(raw_links: list[dict]) -> list[dict]:
         print(f"[WARN] Bedrock classification failed: {e}. Using fallback labels.")
         classifications = [{"label": f"Link {i+1}", "include": True} for i in range(len(raw_links))]
 
-    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    result, idx = [], 0
+    result = []
     for i, link in enumerate(raw_links):
         clf = classifications[i] if i < len(classifications) else {"label": f"Link {i+1}", "include": True}
         if clf.get("include", True):
-            result.append({**link, "label": clf["label"], "letter": letters[idx % 26]})
-            idx += 1
+            result.append({**link, "label": clf["label"]})
 
     return result
+
+
+def assign_letters(classified_links: list[dict], bboxes: list[dict] | None = None) -> list[dict]:
+    """Assign letter labels (A, B, C...) to classified links in visual or source order.
+
+    When bboxes are provided, links are matched to bounding boxes by URL
+    (and anchor text for disambiguation) and sorted by ascending center_y
+    so letters follow visual top-to-bottom order.
+
+    When bboxes are None, links are sorted by element_index (source order)
+    and letters are assigned sequentially.
+    """
+    if not classified_links:
+        return []
+
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    if bboxes:
+        # Build lookup: href -> list of bboxes
+        bbox_by_href: dict[str, list[dict]] = {}
+        for bb in bboxes:
+            href = bb.get("href", "")
+            if href:
+                bbox_by_href.setdefault(href, []).append(bb)
+
+        # Match each link to a bbox and attach center_y for sorting
+        augmented: list[tuple[float, int, dict]] = []
+        used_bboxes: set[int] = set()
+
+        for idx, link in enumerate(classified_links):
+            url = link.get("url", "")
+            anchor = link.get("anchor_text", "").strip().lower()
+            candidates = bbox_by_href.get(url, [])
+
+            matched_bb = None
+            # Prefer text-match for disambiguation of duplicate URLs
+            for bb in candidates:
+                bb_id = id(bb)
+                if bb_id in used_bboxes:
+                    continue
+                bb_text = bb.get("text", "").strip().lower()
+                if anchor and bb_text and (anchor in bb_text or bb_text in anchor):
+                    matched_bb = bb
+                    used_bboxes.add(bb_id)
+                    break
+
+            if matched_bb is None:
+                for bb in candidates:
+                    bb_id = id(bb)
+                    if bb_id not in used_bboxes:
+                        matched_bb = bb
+                        used_bboxes.add(bb_id)
+                        break
+
+            if matched_bb:
+                center_y = matched_bb.get("center_y", 0.0)
+            else:
+                # No bbox match — use element_index as fallback sort key
+                center_y = float(link.get("element_index", idx)) * 1000.0
+
+            augmented.append((center_y, idx, link))
+
+        # Sort by center_y ascending (visual top-to-bottom)
+        augmented.sort(key=lambda t: (t[0], t[1]))
+
+        result = []
+        for i, (_, _, link) in enumerate(augmented):
+            result.append({**link, "letter": letters[i % 26]})
+        return result
+    else:
+        # No bboxes — fall back to source order via element_index
+        sorted_links = sorted(
+            classified_links,
+            key=lambda l: l.get("element_index", 0),
+        )
+        result = []
+        for i, link in enumerate(sorted_links):
+            result.append({**link, "letter": letters[i % 26]})
+        return result

@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { fetchAuthSession } from "aws-amplify/auth";
-import { get } from "aws-amplify/api";
+import { get, post } from "aws-amplify/api";
 
 export default function HistoryPage({ userEmail }) {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [rerunStates, setRerunStates] = useState({});
+  const [rerunErrors, setRerunErrors] = useState({});
 
   useEffect(() => { loadHistory(); }, []);
 
@@ -26,6 +28,43 @@ export default function HistoryPage({ userEmail }) {
       setError("Could not load job history. Please try again.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleRerun(jobId) {
+    setRerunStates(prev => ({ ...prev, [jobId]: "processing" }));
+    setRerunErrors(prev => { const next = { ...prev }; delete next[jobId]; return next; });
+    try {
+      const session = await fetchAuthSession();
+      const token = session.tokens.idToken.toString();
+      const response = await post({
+        apiName: "EmailAnnotatorAPI",
+        path: "/process",
+        options: {
+          headers: { Authorization: token },
+          body: { rerun_job_id: jobId },
+        },
+      }).response;
+      const data = await response.body.json();
+      if (data.job_id) {
+        setRerunStates(prev => ({ ...prev, [jobId]: "success" }));
+        loadHistory();
+      }
+    } catch (err) {
+      let errorCode = "";
+      let errorMessage = "Re-run failed. Please try again.";
+      try {
+        const errBody = JSON.parse(err?.response?.body || "{}");
+        errorCode = errBody.error || "";
+        errorMessage = errBody.message || errorMessage;
+      } catch (_) { /* ignore parse errors */ }
+      if (errorCode === "HTML_NOT_FOUND") {
+        setRerunStates(prev => ({ ...prev, [jobId]: "disabled" }));
+        setRerunErrors(prev => ({ ...prev, [jobId]: "Original HTML not available for this job" }));
+      } else {
+        setRerunStates(prev => ({ ...prev, [jobId]: "error" }));
+        setRerunErrors(prev => ({ ...prev, [jobId]: errorMessage }));
+      }
     }
   }
 
@@ -55,14 +94,22 @@ export default function HistoryPage({ userEmail }) {
 
       {!loading && jobs.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {jobs.map((job) => <JobCard key={job.job_id} job={job} />)}
+          {jobs.map((job) => (
+            <JobCard
+              key={job.job_id}
+              job={job}
+              onRerun={handleRerun}
+              rerunState={rerunStates[job.job_id] || null}
+              rerunError={rerunErrors[job.job_id] || null}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function JobCard({ job }) {
+function JobCard({ job, onRerun, rerunState, rerunError }) {
   const score = job.review_score;
   const counts = job.issue_counts || {};
   const scoreColor = score == null ? "#6b7280"
@@ -139,15 +186,39 @@ function JobCard({ job }) {
           </div>
         </div>
 
-        {/* Download */}
-        {job.pdf_url && (
-          <a href={job.pdf_url} target="_blank" rel="noreferrer"
+        {/* Actions */}
+        <div style={{ display: "flex", gap: "0.5rem", alignSelf: "center", whiteSpace: "nowrap" }}>
+          <button
+            onClick={() => onRerun(job.job_id)}
+            disabled={rerunState === "processing" || rerunState === "disabled"}
             className="download-link"
-            style={{ whiteSpace: "nowrap", alignSelf: "center" }}>
-            ↓ PDF
-          </a>
-        )}
+            style={{
+              background: "none", border: "none", cursor: rerunState === "processing" || rerunState === "disabled" ? "not-allowed" : "pointer",
+              opacity: rerunState === "processing" || rerunState === "disabled" ? 0.5 : 1,
+              padding: 0, font: "inherit",
+            }}
+          >
+            {rerunState === "processing" ? "Processing…" : "↻ Re-run"}
+          </button>
+          {job.pdf_url && (
+            <a href={job.pdf_url} target="_blank" rel="noreferrer"
+              className="download-link"
+              style={{ whiteSpace: "nowrap" }}>
+              ↓ PDF
+            </a>
+          )}
+        </div>
       </div>
+
+      {rerunError && (
+        <div style={{
+          marginTop: "0.5rem", fontSize: "0.78rem", color: "#991b1b",
+          background: "#fef2f2", border: "1px solid #fecaca",
+          borderRadius: "6px", padding: "0.4rem 0.75rem",
+        }}>
+          {rerunError}
+        </div>
+      )}
     </div>
   );
 }
