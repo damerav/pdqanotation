@@ -179,13 +179,15 @@ def test_unique_links_preservation(n, data):
 @settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow])
 def test_fallback_classification_preservation(n, data):
     """
-    **Validates: Requirements 3.3**
+    **Validates: Requirements 3.3 (superseded by generic-link-labels bugfix req 2.2)**
 
-    When Bedrock raises an exception, classify_links() falls back to
-    including all links with generic labels "Link 1", "Link 2", etc.
-    This is existing behavior that must be preserved.
+    When Bedrock raises an exception, classify_links() still includes every
+    link, but now derives a meaningful label from each link's metadata
+    (anchor_text / URL / img_alt) instead of a generic "Link N" fallback.
+    See the generic-link-labels bugfix for the behavior change.
     """
-    from bedrock_classifier import classify_links
+    import re as _re
+    from bedrock_classifier import classify_links, derive_label_from_metadata
 
     segments = data.draw(
         st.lists(_url_segment, min_size=n, max_size=n, unique=True),
@@ -210,13 +212,19 @@ def test_fallback_classification_preservation(n, data):
         mock_bedrock.invoke_model.side_effect = Exception("Service unavailable")
         result = classify_links(raw_links)
 
-    # All links should be included with generic labels
+    # All links should be included, with meaningful metadata-derived labels —
+    # NOT generic "Link N" — since anchor_text metadata is available.
     assert len(result) == n, (
         f"Expected {n} links in fallback, got {len(result)}"
     )
     for i, link in enumerate(result):
-        assert link["label"] == f"Link {i + 1}", (
-            f"Expected label 'Link {i + 1}', got '{link['label']}'"
+        expected = derive_label_from_metadata(raw_links[i], i)
+        assert link["label"] == expected, (
+            f"Expected metadata-derived label '{expected}', got '{link['label']}'"
+        )
+        assert not _re.match(r'^Link\s+\d+$', link["label"]), (
+            f"Fallback label '{link['label']}' should not be generic 'Link N' "
+            f"when anchor_text metadata is available"
         )
 
     # Letters are now assigned by assign_letters(), not classify_links()

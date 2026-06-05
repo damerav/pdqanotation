@@ -32,7 +32,7 @@ def extract_links(html_content: str) -> list[dict]:
             continue
 
         parent = tag.parent
-        context = (parent.get_text(separator=" ", strip=True)[:200] if parent else "")
+        context = (parent.get_text(separator=" ", strip=True)[:500] if parent else "")
 
         link_dict: dict = {
             "url": url,

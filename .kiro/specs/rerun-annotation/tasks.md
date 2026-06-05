@@ -22,12 +22,12 @@ Implement the ability to re-run annotation jobs from the History page by persist
     - Add `"images_s3_key": images_s3_key or None` and `"rerun_from": None` to the `job_record` dict in `_handle_process`
     - _Requirements: 1.3, 3.2_
 
-  - [ ]* 1.4 Write property test for HTML content preservation (Property 1)
+  - [x] 1.4 Write property test for HTML content preservation (Property 1)
     - **Property 1: HTML content preservation (round-trip)**
     - Generate random HTML strings; mock S3 put_object; assert stored content is byte-identical to original input before rewriting
     - **Validates: Requirements 1.2**
 
-  - [ ]* 1.5 Write unit tests for HTML and images persistence
+  - [x] 1.5 Write unit tests for HTML and images persistence
     - Test HTML stored with correct S3 key and content type
     - Test images_s3_key included in job record when provided
     - Test HTML persistence failure doesn't crash pipeline
@@ -55,27 +55,27 @@ Implement the ability to re-run annotation jobs from the History page by persist
     - Include `"rerun_from": rerun_job_id` in the new job record
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 6.2, 6.3_
 
-  - [ ]* 2.3 Write property test for re-run field defaulting (Property 2)
+  - [x] 2.3 Write property test for re-run field defaulting (Property 2)
     - **Property 2: Re-run field defaulting**
     - Generate random combinations of provided vs omitted fields and random original job values; assert effective value equals provided if non-empty, else original
     - **Validates: Requirements 2.2**
 
-  - [ ]* 2.4 Write property test for new job_id generation (Property 3)
+  - [x] 2.4 Write property test for new job_id generation (Property 3)
     - **Property 3: Re-run produces a new job_id**
     - Generate random rerun_job_id strings; assert new job_id differs from rerun_job_id
     - **Validates: Requirements 2.3**
 
-  - [ ]* 2.5 Write property test for authorization/ownership enforcement (Property 4)
+  - [x] 2.5 Write property test for authorization/ownership enforcement (Property 4)
     - **Property 4: Authorization — ownership enforcement**
     - Generate random (email, job_id, is_admin, owns_job) tuples; mock S3 head_object; assert 403 when !admin && !owns, success when admin or owns
     - **Validates: Requirements 2.6, 2.7**
 
-  - [ ]* 2.6 Write property test for re-run traceability (Property 5)
+  - [ ] 2.6 Write property test for re-run traceability (Property 5)
     - **Property 5: Re-run traceability**
     - Generate random rerun_job_id strings; assert resulting job record's `rerun_from` field equals the rerun_job_id
     - **Validates: Requirements 3.2**
 
-  - [ ]* 2.7 Write unit tests for re-run logic
+  - [~] 2.7 Write unit tests for re-run logic
     - Test re-run loads HTML from correct S3 key
     - Test re-run uses JWT email, not original recipient
     - Test 404 returned when HTML not in S3
@@ -115,7 +115,7 @@ Implement the ability to re-run annotation jobs from the History page by persist
     - Style consistently with the existing "↓ PDF" link
     - _Requirements: 4.1, 4.3, 4.5, 4.6_
 
-  - [ ]* 5.3 Write unit tests for re-run UI behavior
+  - [~] 5.3 Write unit tests for re-run UI behavior
     - Test re-run button renders on each job card
     - Test re-run button sends correct POST payload with `rerun_job_id`
     - Test button disabled during processing
@@ -124,7 +124,7 @@ Implement the ability to re-run annotation jobs from the History page by persist
     - Test HTML_NOT_FOUND disables button permanently
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
 
-- [x] 6. Final checkpoint
+- [ ] 6. Final checkpoint
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

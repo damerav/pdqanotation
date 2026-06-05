@@ -7,3 +7,8 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# Test + tooling artifacts
+.hypothesis/
+.pytest_cache/
+.playwright-mcp/
