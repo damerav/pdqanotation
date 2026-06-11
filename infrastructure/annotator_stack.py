@@ -94,7 +94,7 @@ class EmailAnnotatorStack(Stack):
             environment={
                 "S3_BUCKET": bucket.bucket_name,
                 "SES_FROM_EMAIL": ses_from_email,
-                "SCREENSHOT_SERVICE_URL": "http://54.81.69.58:5000",
+                "SCREENSHOT_SERVICE_URL": "http://34.239.138.60:5000",
             },
         )
 
